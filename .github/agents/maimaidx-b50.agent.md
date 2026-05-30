@@ -16,6 +16,7 @@ name: "MaimaiDX B50 Agent"
 lxns_b50/
 ├── __init__.py          # 插件入口 & 生命周期钩子
 ├── config.py            # 配置项 & 游戏常量字典
+├── mai_sync_data/       # 自动生成的缓存数据（musicDB.json 等）
 ├── command/
 │   ├── __init__.py      # 导出所有命令模块
 │   ├── mai_alias.py     # 别名查询/更新命令
@@ -25,16 +26,17 @@ lxns_b50/
 │   ├── mai_search.py    # 搜索命令（查歌/定数查歌/bpm查歌/曲师查歌/谱师查歌）
 │   └── mai_table.py     # 定数表/完成表/进度/上分推荐命令
 ├── libraries/
-│   ├── maimaidx_api_data.py    # API 路由 & 鉴权（MaiApi 类）
-│   ├── maimaidx_best_50.py     # B50 图片渲染核心（ScoreBaseImage/DrawBest）
-│   ├── maimaidx_error.py       # 自定义异常类
-│   ├── maimaidx_model.py       # Pydantic 数据模型
-│   ├── maimaidx_music.py       # 曲库管理（MaiMusic 类 / 双源同步）
-│   ├── maimaidx_music_info.py  # 单曲游玩详情/定数表/完成表绘制
+│   ├── maimaidx_api_data.py     # API 路由 & 鉴权（MaiApi 类）
+│   ├── maimaidx_best_50.py      # B50 图片渲染核心（ScoreBaseImage/DrawBest）
+│   ├── maimaidx_error.py        # 自定义异常类
+│   ├── maimaidx_model.py        # Pydantic 数据模型
+│   ├── maimaidx_music.py        # 曲库管理（MaiMusic 类 / 双源同步 / 曲绘下载）
+│   ├── maimaidx_music_info.py   # 单曲游玩详情/定数表/完成表绘制
 │   ├── maimaidx_player_score.py # 玩家成绩数据处理（上分/牌子进度/等级进度）
 │   ├── maimaidx_update_plate.py # 定数表/完成表图片生成工具
-│   ├── tool.py                 # 工具函数（Playwright截图/文件读写）
-│   └── image.py                # 图片处理工具（DrawText/渐变/圆角/Base64）
+│   ├── lib_music_db.py          # musicDB 管理器（落雪 song_id 权威列表/曲绘下载）
+│   ├── tool.py                  # 工具函数（Playwright截图/文件读写）
+│   └── image.py                 # 图片处理工具（DrawText/渐变/圆角/Base64/曲绘查找/图片验证）
 ```
 
 ### 核心依赖
@@ -44,6 +46,66 @@ lxns_b50/
 - **Pydantic** — 数据模型
 - **pyecharts** — 图表生成
 - **Playwright** — HTML 转图片
+
+## 🆔 Song ID 双体系（核心难点）
+
+**落雪 (LXNS)** 和 **水鱼 (Diving-Fish)** 使用完全不同的 song_id 体系，这是本项目的核心难点。
+
+| 项目 | 落雪 LXNS | 水鱼 Diving-Fish |
+|------|-----------|-----------------|
+| 原生 ID | 小整数（如 `8`, `38`, `799`） | SD 谱面同落雪，DX 谱面 = 落雪ID + 10000 |
+| 示例 | `8` → True Love Song | `10008` → True Love Song (DX) |
+| 宴会场 | ID > 100000（如 `100044`） | 同落雪 |
+| 曲绘 URL | `https://assets2.lxns.net/maimai/jacket/{id}.png` | `https://www.diving-fish.com/covers/{id:05d}.png`（补零到5位） |
+| 曲绘文件 | 以 **落雪原生 ID** 命名 (`8.png`) | 回退查找 `{id-10000}.png` |
+
+**查找策略 (`music_picture()`)**:
+1. 直接查找 `{music_id}.png`（自动检测损坏并删除）
+2. 若 ID > 100000（宴会场），尝试 `{music_id - 100000}.png`
+3. 若 ID 是落雪原生小数字，尝试 `{id+10000}.png`（水鱼DX）
+4. 若 ID 是水鱼 DX 格式，尝试 `{id-10000}.png`（落雪SD）
+5. 回退到 `0.png` → `11000.png` 占位图
+
+### musicDB.json — 落雪 song_id 权威列表
+
+`musicDB.json` 是落雪 song_id 的权威缓存列表，**存放在插件目录下**：
+```
+{插件目录}/mai_sync_data/musicDB.json
+```
+例如 `lxns_b50/mai_sync_data/musicDB.json`
+
+#### 自动生成机制
+- **生成时机**：每次执行双源同步（`MaiMusic.get_music()`）且成功拉取落雪数据后，自动调用 `generate_music_db()` 生成
+- **生成函数**：`lib_music_db.py::generate_music_db(lxns_music_list, save_path)`
+- **触发时机**：插件启动时 + 每日凌晨 04:00 定时任务
+- **结构**：
+```json
+{"8": {"name": "True Love Song", "version": 10000}, ...}
+```
+- 键（key）= 落雪原生 song_id（字符串）
+- 值（value）= `{name: 曲名, version: 版本号}`
+- 包含 SD、DX 分离后的 ID（DX 谱面键为 `{原ID+10000}`）
+
+#### 配置路径
+在 `config.py` 中定义（目录自动创建）：
+```python
+music_db_path: Path = Root / 'mai_sync_data' / 'musicDB.json'
+music_db_path.parent.mkdir(parents=True, exist_ok=True)  # 自动创建 mai_sync_data/
+# Root = Path(__file__).parent.absolute()  # 即 lxns_b50/ 目录
+```
+
+### 曲绘全量下载流程
+
+1. **首次启动**：双源同步 → 生成 `musicDB.json` → 读取所有 ID → 调用 `download_all_covers()` → 下载全部曲绘到 `{coverdir}/`
+2. **后续启动**：加载 `musicDB.json` 缓存 → **清理损坏曲绘**（< 5KB 或魔数不正确） → 检查 `cover/` 目录中缺失的曲绘 → 增量补充
+3. **ID 映射**：落雪曲绘 URL 只认**原生 song_id**，下载前自动转换：
+   - `10001~99999`（DX 谱面）→ `id % 10000`
+   - `≥ 100000`（宴会场）→ `id % 100000`
+   - `≤ 10000`（原生）→ 直接使用
+4. **双源下载**：优先落雪（`curl_cffi` 模拟 Chrome 指纹绕过 Cloudflare），失败时自动切换水鱼（`httpx`）
+5. **内容验证**：下载时使用 `image.is_valid_image()` 检查 PNG/JPEG/WebP 魔数，防止 Cloudflare 反爬页面被存为 `.png`
+6. **损坏自愈**：`music_picture()` 每次访问都会用魔数校验文件，损坏文件自动删除并降级到 `0.png` 占位图；同时记录到 `_corrupted_cover_ids` 全局集合，避免反复重试
+7. **降级策略**：若 `musicDB.json` 不存在（如落雪 API 失败），则回退使用 `total_list` 遍历下载
 
 ## 双数据源架构
 
@@ -120,6 +182,16 @@ Body: { "qq": "123456", "b50": "1" }
 | `maimaidxtoken` | 水鱼开发者密钥 | `""` |
 | `maimaidxpath` | 水鱼资源路径 | `static` |
 | `saveinmem` | 是否缓存图片到内存 | `True` |
+| `use_markdown` | 启用 Markdown+按钮模式（官方Bot） | `False` |
+| `official_bot_ids` | 官方机器人ID列表 | `["3889004352", "3889047402"]` |
+
+### 导出的路径常量
+
+| 常量名 | 路径 | 说明 |
+|--------|------|------|
+| `Root` | `lxns_b50/` | 插件根目录（`Path(__file__).parent.absolute()`） |
+| `static` | 由 `lxnspath`/`maimaidxpath` 决定 | 静态资源根目录（曲绘/字体/牌子等） |
+| `music_db_path` | `{Root}/mai_sync_data/musicDB.json` | 落雪 song_id 权威列表，自动生成 |
 
 ## 可用指令
 
@@ -134,6 +206,8 @@ Body: { "qq": "123456", "b50": "1" }
 | `切换数据源 <水鱼/落雪>` | 切换默认输出端 | `mai_base.py` |
 | `mai帮助` | 查看帮助菜单 | `mai_base.py` |
 | `mai曲线` | 绘制 Rating 历史趋势 | `mai_base.py` |
+| `mai最近` | 【落雪特供】查看最近 50 条游玩记录 | `mai_base.py` |
+| `mai热度` | 【落雪特供】查看成绩上传热力图 | `mai_base.py` |
 | `查歌 <关键词>` | 模糊检索歌曲 | `mai_search.py` |
 | `id <ID>` | 查看谱面底标 | `mai_search.py` |
 | `定数查歌 <定数>` | 按定数查歌 | `mai_search.py` |
@@ -204,8 +278,23 @@ ra = floor(ds * min(100.5, achievements) / 100 * baseRa)
 ### 双源数据同步流程 (启动/每日定时)
 1. `mai.get_music()` 同时请求落雪和水鱼的数据
 2. 合并两个数据源的曲目、别名
-3. 保存到本地 JSON 缓存
-4. 异步下载缺失的曲绘资源
+3. 保存到本地 JSON 缓存 (`music_data.json`)
+4. 若落雪数据拉取成功，调用 `generate_music_db()` 生成 `mai_sync_data/musicDB.json`
+5. 异步下载缺失的曲绘资源（优先基于 musicDB.json 全量下载，降级使用 total_list）
+
+### 官方 Bot 按钮/Markdown 消息机制
+
+**判断逻辑** (`maimaidx_api_data.py`):
+- `is_official_bot(bot_self_id)` → 检查 bot ID 是否在 `config.official_bot_ids` 列表中，或 `use_markdown=True`
+- 默认官方 bot IDs: `["3889004352", "3889047402"]`
+
+**按钮构建** (`maimaidx_api_data.py`):
+- `build_markdown_keyboard(rows_config)` → 构建 Gensokyo 兼容键盘按钮
+- 在 `mai_base.py` 中通过 `extra={"markdown": True, "keyboard": ...}` 发送
+
+**使用前提**：
+- Gensokyo 框架必须启用 `native_md: true`
+- 官方 Bot 需要在 QQ 开放平台配置 MD 模板
 
 ## 重要常量
 

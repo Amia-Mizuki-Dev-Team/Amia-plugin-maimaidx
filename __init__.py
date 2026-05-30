@@ -1,14 +1,14 @@
 import nonebot
-from pathlib import Path
 from nonebot.plugin import PluginMetadata, require
 
 # =====================================================================
 # 【关键修复】从导入列表中删除引发 ImportError 的 ScoreBaseImage
 # ==========================================
 from .command import *
-from .config import Config, maiconfig, driver, ratingdir
+from .config import Config, maiconfig, driver, ratingdir, coverdir, music_db_path
 from .libraries.maimaidx_api_data import maiApi
 from .libraries.maimaidx_music import mai, update_daily
+from .libraries.lib_music_db import music_db_cache, download_all_covers
 from nonebot.log import logger as log
 
 # 注册并拉取定时计划任务组件
@@ -70,6 +70,35 @@ async def get_music():
     # 触发双源聚合全量同步（同时向落雪与水鱼拉取歌曲/别名，增量同步曲绘）
     log.info('执行远端全量歌曲大库、跨端特色别名库及本地曲绘自愈补全...')
     await mai.get_music()
+    
+    # ==========================================
+    # 加载 musicDB.json 缓存（落雪官方 song_id 权威列表）
+    # 存放在插件目录 lxns_b50/mai_sync_data/musicDB.json
+    # 双源同步时自动生成，每日凌晨 04:00 自动更新
+    # ==========================================
+    if music_db_path.exists():
+        await music_db_cache.load(music_db_path)
+        # 清理已损坏的曲绘（大小 < 5KB 或魔数不正确的文件）
+        from .libraries.image import is_valid_image, _corrupted_cover_ids
+        cleaned = 0
+        for f in coverdir.glob('*.png'):
+            if f.stat().st_size < 5000:
+                _corrupted_cover_ids.add(f.stem)
+                f.unlink(missing_ok=True)
+                cleaned += 1
+            else:
+                data = f.read_bytes()[:16]
+                if not is_valid_image(data):
+                    _corrupted_cover_ids.add(f.stem)
+                    f.unlink(missing_ok=True)
+                    cleaned += 1
+        if cleaned > 0:
+            log.info(f'启动时清理 {cleaned} 张损坏曲绘，将在后续步骤重新下载')
+        # 基于 musicDB.json 补全缺失的曲绘（首次运行会全量下载）
+        if maiconfig.lxnstoken:
+            count = await download_all_covers(coverdir, maiconfig.lxnstoken, concurrency=5)
+            if count > 0:
+                log.info(f'启动时补全曲绘 {count} 张')
     
     # 兼容处理老版本的 JSON 初始化
     if hasattr(mai, 'get_plate_json'):

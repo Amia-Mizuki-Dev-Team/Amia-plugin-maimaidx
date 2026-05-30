@@ -3,7 +3,7 @@ import time
 from nonebot import on_command
 from nonebot.adapters.onebot.v11 import Bot, Message, MessageEvent, MessageSegment
 from nonebot.params import CommandArg
-from ..libraries.maimaidx_api_data import maiApi, user_source_route, maiconfig
+from ..libraries.maimaidx_api_data import maiApi, user_source_route, maiconfig, is_official_bot, build_markdown_keyboard
 from ..libraries.tool import run_chrome_to_base64
 
 # 指令注册总览
@@ -11,6 +11,8 @@ maimaidxhelp = on_command('mai帮助', aliases={'帮助maimaiDX', '帮助maimaid
 switch_source = on_command('切换数据源')
 user_profile = on_command('mai状态', aliases={'详细信息', 'mai个人中心'})
 render_curve = on_command('mai曲线')
+render_recent = on_command('mai最近', aliases={'mai最近成绩', 'mai recent'})
+render_heatmap = on_command('mai热度', aliases={'mai热力图', 'mai heatmap'})
 
 
 @switch_source.handle()
@@ -89,7 +91,7 @@ async def _(bot: Bot, event: MessageEvent):
     }
 
     # 智能判别分流
-    if str(bot.self_id) == "3889004352":
+    if is_official_bot(bot.self_id):
         await bot.send(event=event, message=md_help, extra={"markdown": True, "keyboard": inline_keyboard})
     else:
         await maimaidxhelp.finish(plain_help, reply_message=True)
@@ -154,7 +156,7 @@ async def _(bot: Bot, event: MessageEvent):
         ]
     }
 
-    if str(bot.self_id) == "3889004352":
+    if is_official_bot(bot.self_id):
         await bot.send(event=event, message=md_profile, extra={"markdown": True, "keyboard": inline_keyboard})
     else:
         await user_profile.finish(plain_profile, reply_message=True)
@@ -198,3 +200,120 @@ async def _(bot: Bot, event: MessageEvent):
         await render_curve.finish(MessageSegment.image(base64_img), reply_message=True)
     except:
         await render_curve.finish("⚠️ 历史战绩画布高级组件渲染失败，请联系Bot管理员检修服务器配置环境。", reply_message=True)
+
+
+@render_recent.handle()
+async def _(bot: Bot, event: MessageEvent):
+    """
+    【落雪特供】最近 50 条游玩记录
+    使用落雪 API: GET /maimai/player/qq/{qq}/recents
+    """
+    qqid = event.user_id
+    current_source = user_source_route.get(qqid, maiconfig.prober_source.lower())
+    if current_source != 'lxns':
+        await render_recent.finish("⚠️ 最近游玩记录功能目前由落雪 API 独占特供，请先切换默认输出端为落雪查分器！", reply_message=True)
+    
+    try:
+        import httpx
+        headers = {"Authorization": maiconfig.lxnstoken}
+        async with httpx.AsyncClient(timeout=15) as client:
+            # 先获取 friend_code
+            res = await client.get(f"https://maimai.lxns.net/api/v0/maimai/player/qq/{qqid}", headers=headers)
+            if res.status_code != 200:
+                await render_recent.finish("❌ 未在落雪找到您的绑定信息，请先前往 https://maimai.lxns.net 绑定 QQ", reply_message=True)
+            player_data = res.json().get("data", {})
+            friend_code = player_data.get("friend_code")
+            if not friend_code:
+                await render_recent.finish("❌ 无法获取您的落雪好友码", reply_message=True)
+            
+            # 获取最近 50 条记录
+            recents_res = await client.get(
+                f"https://maimai.lxns.net/api/v0/maimai/player/{friend_code}/recents",
+                headers=headers
+            )
+            if recents_res.status_code != 200:
+                await render_recent.finish("❌ 获取最近记录失败，可能暂无游玩数据", reply_message=True)
+            
+            recents = recents_res.json().get("data", [])
+            if not recents:
+                await render_recent.finish("📭 暂无最近游玩记录", reply_message=True)
+        
+        # 格式化输出最近记录
+        msg = f"🎵 {player_data.get('name', '未知')} 的最近游玩记录\n"
+        msg += f"{'='*30}\n"
+        for i, r in enumerate(recents[:20]):  # 最多显示20条
+            song_name = r.get("song_name", "未知曲目")
+            level = r.get("level", "")
+            achievements = r.get("achievements", 0)
+            rate = r.get("rate", "")
+            fc = r.get("fc", "")
+            fs = r.get("fs", "")
+            dx_score = r.get("dx_score", 0)
+            
+            badges = ""
+            if fc: badges += f" [{fc.upper()}]"
+            if fs: badges += f" [{fs.upper()}]"
+            
+            msg += f"{i+1:2d}. {song_name} [{level}] {achievements:.4f}% {rate}{badges} DX:{dx_score}\n"
+        
+        if len(recents) > 20:
+            msg += f"\n... 及另外 {len(recents) - 20} 条记录"
+        
+        from ..libraries.image import text_to_bytes_io
+        await render_recent.finish(MessageSegment.image(text_to_bytes_io(msg.strip())), reply_message=True)
+        
+    except Exception as e:
+        import traceback
+        log.error(f"[mai最近] 查询失败:\n{traceback.format_exc()}")
+        await render_recent.finish(f"⚠️ 查询最近记录失败: {type(e).__name__}", reply_message=True)
+
+
+@render_heatmap.handle()
+async def _(bot: Bot, event: MessageEvent):
+    """
+    【落雪特供】成绩上传热力图
+    使用落雪 API: GET /maimai/player/{friend_code}/heatmap
+    """
+    qqid = event.user_id
+    current_source = user_source_route.get(qqid, maiconfig.prober_source.lower())
+    if current_source != 'lxns':
+        await render_heatmap.finish("⚠️ 热力图功能目前由落雪 API 独占特供，请先切换默认输出端为落雪查分器！", reply_message=True)
+    
+    try:
+        import httpx
+        headers = {"Authorization": maiconfig.lxnstoken}
+        async with httpx.AsyncClient(timeout=15) as client:
+            # 先获取 friend_code
+            res = await client.get(f"https://maimai.lxns.net/api/v0/maimai/player/qq/{qqid}", headers=headers)
+            if res.status_code != 200:
+                await render_heatmap.finish("❌ 未在落雪找到您的绑定信息", reply_message=True)
+            player_data = res.json().get("data", {})
+            friend_code = player_data.get("friend_code")
+            if not friend_code:
+                await render_heatmap.finish("❌ 无法获取您的落雪好友码", reply_message=True)
+            
+            heatmap_res = await client.get(
+                f"https://maimai.lxns.net/api/v0/maimai/player/{friend_code}/heatmap",
+                headers=headers
+            )
+            if heatmap_res.status_code != 200:
+                await render_heatmap.finish("❌ 获取热力图数据失败", reply_message=True)
+            
+            heat_data = heatmap_res.json().get("data", {})
+            if not heat_data:
+                await render_heatmap.finish("📭 暂无热力图数据", reply_message=True)
+        
+        from ..libraries.image import text_to_bytes_io
+        sorted_dates = sorted(heat_data.items(), key=lambda x: x[0], reverse=True)[:30]
+        msg = f"🔥 {player_data.get('name', '未知')} 的成绩上传热力图 (近30天)\n"
+        msg += f"{'='*30}\n"
+        for date, count in sorted_dates:
+            bar = "█" * min(count, 20)
+            msg += f"{date} │ {bar} {count}\n"
+        
+        await render_heatmap.finish(MessageSegment.image(text_to_bytes_io(msg.strip())), reply_message=True)
+        
+    except Exception as e:
+        import traceback
+        log.error(f"[mai热度] 查询失败:\n{traceback.format_exc()}")
+        await render_heatmap.finish(f"⚠️ 查询热力图失败: {type(e).__name__}", reply_message=True)

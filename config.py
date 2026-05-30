@@ -24,6 +24,14 @@ class Config(BaseModel):
     maimaidxtoken: Optional[str] = Field(default="", validation_alias=AliasChoices("maimaidxtoken", "MAIMAIDXTOKEN", "maimai_dx_token", "MAIMAIDX_TOKEN"))
 
     # ==========================================
+    # 【Markdown/按钮模式 — 适用于 QQ 官方机器人（公域/私域）】
+    # use_markdown=True 时启用 Markdown 格式消息和交互按钮
+    # official_bot_ids 列表中的机器人会自动启用按钮
+    # ==========================================
+    use_markdown: bool = Field(default=False, validation_alias=AliasChoices("use_markdown", "USE_MARKDOWN"))
+    official_bot_ids: List[str] = Field(default=["3889004352", "3889047402"], validation_alias=AliasChoices("official_bot_ids", "OFFICIAL_BOT_IDS"))
+
+    # ==========================================
     # 【老版本插件存量字段兼容兜底】
     # ==========================================
     maimaidxproberproxy: bool = False
@@ -74,6 +82,13 @@ ratingdir.mkdir(parents=True, exist_ok=True)
 SIYUAN: Path = static / 'ResourceHanRoundedCN-Bold.ttf'
 SHANGGUMONO: Path = static / 'ShangguMonoSC-Regular.otf'
 TBFONT: Path = static / 'Torus SemiBold.otf'
+
+# ==========================================
+# musicDB.json 路径（存放在插件目录下的 mai_sync_data/）
+# 用于全量曲绘下载和 song_id 映射，每日同步自动更新
+# ==========================================
+music_db_path: Path = Root / 'mai_sync_data' / 'musicDB.json'
+music_db_path.parent.mkdir(parents=True, exist_ok=True)
 
 # 核心数据本地快照缓冲区
 music_file: Path = static / 'music_data.json'

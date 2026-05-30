@@ -4,8 +4,8 @@ import httpx
 import aiofiles
 from typing import Dict, Any, List, Optional
 from loguru import logger as log
-from ..config import maiconfig, music_file, coverdir, guess_file
-
+from ..config import maiconfig, music_file, coverdir, guess_file, music_db_path
+from .lib_music_db import music_db_cache, download_all_covers, generate_music_db, _download_one_cover, _LXNS_HEADERS
 from .maimaidx_api_data import maiApi
 
 class Music(dict):
@@ -127,26 +127,52 @@ class MaiMusic:
         except Exception:
             pass
 
+        # 从落雪曲目列表生成 musicDB.json（用于全量曲绘下载）
+        if lxns_music:
+            await generate_music_db(lxns_music, music_db_path)
+
         asyncio.create_task(self.download_missing_covers())
 
     async def download_missing_covers(self):
-        base_url = "https://assets2.lxns.net/maimai/jacket/{}.png"
-        async with httpx.AsyncClient(timeout=30) as client:
+        """
+        基于 musicDB.json 全量同步落雪曲绘。
+        
+        落雪曲绘 URL: https://assets2.lxns.net/maimai/jacket/{song_id}.png
+        水鱼曲绘 URL: https://www.diving-fish.com/covers/{cover_id:05d}.png
+        
+        song_id 体系差异:
+        - 落雪: 使用原生 ID (如 8, 38, 799)
+        - 水鱼: DX 谱面 ID = 落雪 ID + 10000 (如 10008, 10038)
+        
+        曲绘文件统一以 落雪原生 song_id.png 命名存储在 coverdir 中。
+        当查询水鱼 ID (10008) 时, music_picture() 会回退查找 10008-10000=8.png。
+        """
+        # 优先用 musicDB.json 作为权威来源下载全量曲绘
+        if music_db_path.exists():
+            await music_db_cache.load(music_db_path)
+            count = await download_all_covers(coverdir, maiconfig.lxnstoken, concurrency=5)
+            log.info(f"musicDB 全量曲绘同步完成，下载 {count} 张")
+        else:
+            # 降级：从 total_list 逐一下载
+            log.warning("musicDB.json 不存在，降级使用 total_list 下载曲绘")
+            from ..libraries.image import is_valid_image, _corrupted_cover_ids
+            processed = 0
             for music in self.total_list:
-                song_id = int(music.get('id', 0))
-                if song_id > 100000:
-                    song_id %= 100000
-                cover_path = coverdir / f'{song_id}.png'
-                
-                if not cover_path.exists():
-                    try:
-                        res = await client.get(base_url.format(song_id))
-                        if res.status_code == 200:
-                            async with aiofiles.open(cover_path, 'wb') as f:
-                                await f.write(res.content)
-                        await asyncio.sleep(0.1)
-                    except:
-                        pass
+                raw_id = int(music.get('id', 0))
+                if raw_id > 100000:
+                    song_id = raw_id % 100000
+                elif raw_id > 10000:
+                    song_id = raw_id % 10000
+                else:
+                    song_id = raw_id
+                sid_str = str(song_id)
+                if sid_str in _corrupted_cover_ids:
+                    continue
+                cover_path = coverdir / f'{sid_str}.png'
+                if cover_path.exists() and cover_path.stat().st_size > 5000:
+                    continue
+                if _download_one_cover(song_id, coverdir, _LXNS_HEADERS):
+                    processed += 1
 
 mai = MaiMusic()
 

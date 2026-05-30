@@ -242,6 +242,69 @@ class MaiApi:
             log.warning(f"获取别名数据失败: {e}")
         return None
 
+# ==========================================
+# 官方 Bot 判断 & Markdown 键盘构建工具
+# ==========================================
+
+def is_official_bot(bot_self_id: str) -> bool:
+    """判断当前 Bot 是否为官方机器人（支持 Markdown+按钮）"""
+    if maiconfig.use_markdown:
+        return True
+    return str(bot_self_id) in maiconfig.official_bot_ids
+
+
+def build_markdown_keyboard(rows_config: list) -> dict:
+    """
+    构建 Gensokyo 兼容的 Markdown 键盘按钮。
+    
+    rows_config 格式:
+    [
+        [{"label": "按钮1", "data": "指令1"}, {"label": "按钮2", "data": "指令2"}],
+        [{"label": "跳转", "data": "https://...", "type": 0}],
+    ]
+    
+    每个按钮字段:
+    - label: 显示文字 (必填)
+    - data: 指令文本或跳转URL (必填)
+    - type: 2=指令 (默认), 0=跳转
+    - style: 1=蓝色 (默认), 0=灰色, 2=绿色
+    - enter: True=点击直接发送指令 (默认False)
+    - reply: True=带引用回复 (仅type=2)
+    - specify_user_ids: True=仅当前用户可点击
+    """
+    rows = []
+    for row_btns in rows_config:
+        buttons = []
+        for btn in row_btns:
+            b = {
+                "render_data": {
+                    "label": btn.get("label", "按钮"),
+                    "style": btn.get("style", 1),
+                },
+                "action": {
+                    "type": btn.get("type", 2),
+                    "data": btn.get("data", ""),
+                    "permission": {"type": 2},
+                },
+            }
+            # visited_label
+            if "visited_label" in btn:
+                b["render_data"]["visited_label"] = btn["visited_label"]
+            # 指令按钮专属
+            if b["action"]["type"] == 2:
+                b["action"]["enter"] = btn.get("enter", False)
+                b["action"]["reply"] = btn.get("reply", False)
+            # 权限控制
+            if btn.get("specify_user_ids") is True:
+                b["action"]["permission"]["type"] = 0
+                b["action"]["permission"]["specify_user_ids"] = ["__USER_ID__"]
+            # ID
+            b["id"] = btn.get("id", f"btn_{abs(hash(b['render_data']['label'])) & 0xffff}")
+            buttons.append(b)
+        rows.append({"buttons": buttons})
+    return {"content": {"rows": rows}}
+
+
     async def qqlogo(self, qqid: int) -> bytes:
         """获取 QQ 头像"""
         async with httpx.AsyncClient(timeout=10) as client:

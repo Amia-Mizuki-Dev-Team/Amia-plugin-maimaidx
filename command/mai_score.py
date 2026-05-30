@@ -10,6 +10,7 @@ from loguru import logger as log
 from ..libraries.maimaidx_best_50 import generate
 from ..libraries.maimaidx_error import UserNotBindLXNSError, UserNotBindFishError
 from ..libraries.maimaidx_music import mai
+from ..libraries.maimaidx_api_data import is_official_bot
 
 # ==========================================
 # 宽泛导入存量老版本函数，阻断 ImportError
@@ -50,7 +51,7 @@ async def _(bot: Bot, event: MessageEvent, message: Message = CommandArg(), user
     """生成 Best 50"""
     qqid = user_id or event.user_id
     username = message.extract_plain_text().strip()
-    is_official = bool(str(bot.self_id) == "3889004352")
+    is_official = is_official_bot(bot.self_id)
     
     try:
         img_res = await generate(qqid, username)
@@ -73,7 +74,7 @@ async def _(bot: Bot, event: MessageEvent, message: Message = CommandArg(), user
     """生成 AP 50"""
     qqid = user_id or event.user_id
     username = message.extract_plain_text().strip()
-    is_official = bool(str(bot.self_id) == "3889004352")
+    is_official = is_official_bot(bot.self_id)
     
     try:
         img_res = await generate(qqid, username, is_ap=True)
