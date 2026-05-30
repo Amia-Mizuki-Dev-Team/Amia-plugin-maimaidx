@@ -156,23 +156,33 @@ class MaiMusic:
             # 降级：从 total_list 逐一下载
             log.warning("musicDB.json 不存在，降级使用 total_list 下载曲绘")
             from ..libraries.image import is_valid_image, _corrupted_cover_ids
+            import shutil
             processed = 0
+            # 先构建 download_id → [原始ID] 映射
+            id_map = {}
             for music in self.total_list:
                 raw_id = int(music.get('id', 0))
+                sid = str(raw_id)
                 if raw_id > 100000:
-                    song_id = raw_id % 100000
+                    did = raw_id % 100000
                 elif raw_id > 10000:
-                    song_id = raw_id % 10000
+                    did = raw_id % 10000
                 else:
-                    song_id = raw_id
-                sid_str = str(song_id)
-                if sid_str in _corrupted_cover_ids:
-                    continue
-                cover_path = coverdir / f'{sid_str}.png'
-                if cover_path.exists() and cover_path.stat().st_size > 5000:
-                    continue
-                if _download_one_cover(song_id, coverdir, _LXNS_HEADERS):
+                    did = raw_id
+                if did not in id_map:
+                    id_map[did] = []
+                id_map[did].append(sid)
+            for download_id, original_ids in id_map.items():
+                # 跳过已知损坏的
+                tmp_path = coverdir / f'__tmp_{download_id}.png'
+                tmp_save = f'__tmp_{download_id}'
+                if _download_one_cover(download_id, tmp_save, coverdir, _LXNS_HEADERS):
+                    for oid in original_ids:
+                        dst = coverdir / f'{oid}.png'
+                        if not dst.exists() or dst.stat().st_size < 5000:
+                            shutil.copy2(tmp_path, dst)
                     processed += 1
+                tmp_path.unlink(missing_ok=True)
 
 mai = MaiMusic()
 

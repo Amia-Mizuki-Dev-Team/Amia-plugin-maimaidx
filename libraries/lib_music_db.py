@@ -148,13 +148,20 @@ async def generate_music_db(lxns_music_list: list, save_path: Path) -> None:
 # 曲绘下载管理器（严格遵循 LX.py 方式：同步 + 单线程 + 无并发）
 # ==========================================
 
-def _download_one_cover(song_id: int, cover_dir: Path, lxns_headers: dict) -> bool:
+def _download_one_cover(download_id: int, save_id: str, cover_dir: Path, headers: dict) -> bool:
     """
-    下载单张曲绘，严格遵循 LX.py 的模式。
-    返回 True 表示下载成功，False 表示失败。
+    下载单张曲绘并保存为原始 ID 文件名。
+
+    Args:
+        download_id: 用于拼接下载 URL（已取模后的 ID）
+        save_id:     用于保存文件名（musicDB.json 中的原始键名）
+        cover_dir:   曲绘保存目录
+        headers:     请求头
+
+    Returns: True=成功, False=失败
     """
-    cover_path = cover_dir / f'{song_id}.png'
-    url = f"https://assets2.lxns.net/maimai/jacket/{song_id}.png"
+    cover_path = cover_dir / f'{save_id}.png'
+    url = f"https://assets2.lxns.net/maimai/jacket/{download_id}.png"
 
     # 已有有效文件则跳过
     if cover_path.exists() and cover_path.stat().st_size > 5000:
@@ -166,22 +173,22 @@ def _download_one_cover(song_id: int, cover_dir: Path, lxns_headers: dict) -> bo
             pass
 
     try:
-        resp = cffi_requests.get(url, headers=lxns_headers, impersonate="edge131")
+        resp = cffi_requests.get(url, headers=headers, impersonate="edge131")
     except Exception:
         try:
-            resp = cffi_requests.get(url, headers=lxns_headers, impersonate="edge101")
+            resp = cffi_requests.get(url, headers=headers, impersonate="edge101")
         except Exception as e:
-            log.warning(f"下载曲绘 {song_id} 失败: {e}")
+            log.warning(f"下载曲绘 {save_id}({download_id}) 失败: {e}")
             return False
 
     try:
         resp.raise_for_status()
         with open(cover_path, 'wb') as f:
             f.write(resp.content)
-        log.info(f"曲绘 {song_id}.png 下载成功")
+        log.info(f"曲绘 {save_id}.png({download_id}) 下载成功")
         return True
     except Exception as e:
-        log.warning(f"下载曲绘 {song_id} 失败: {e}")
+        log.warning(f"下载曲绘 {save_id}({download_id}) 失败: {e}")
         return False
 
 
@@ -208,36 +215,49 @@ async def download_all_covers(
     """
     基于 musicDB.json 全量下载落雪曲绘到 cover_dir。
     
-    - 从 musicDB.json 获取所有落雪 song_id
-    - ID 映射：DX 谱面（10000~99999）取模 10000，宴会场（>100000）取模 100000
-    - 严格按 LX.py 方式：同步、顺序、单线程、无并发
+    下载时 URL 使用取模后的 download_id，保存文件时使用 musicDB.json 中的原始键名。
+    例如 musicDB 中有 "44" 和 "10044"（同一首歌），
+    → 均以 download_id=44 请求 https://.../44.png
+    → 但分别保存为 44.png 和 10044.png
+    这样 music_picture() 根据 music_id 查找时可直接命中。
     """
     all_ids = await music_db_cache.get_all_ids()
     if not all_ids:
         log.warning("musicDB 缓存为空，无法下载曲绘")
         return 0
-    
-    # ID 映射
-    cover_ids = set()
+
+    # 构建映射：download_id → [original_id, ...]
+    # 同一 download_id 只需下载一次，再复制给所有原始 ID
+    import shutil
+    id_map: Dict[int, List[str]] = {}
     for sid in all_ids:
         num_id = int(sid)
         if num_id > 100000:
-            cover_ids.add(num_id % 100000)
+            did = num_id % 100000
         elif num_id > 10000:
-            cover_ids.add(num_id % 10000)
+            did = num_id % 10000
         else:
-            cover_ids.add(num_id)
-    
-    all_download_ids = sorted(cover_ids)
+            did = num_id
+        if did not in id_map:
+            id_map[did] = []
+        id_map[did].append(sid)
+
+    log.info(f"开始顺序下载曲绘（{len(id_map)} 个唯一图片，共 {len(all_ids)} 个文件名）...")
     downloaded = 0
 
-    log.info(f"开始顺序下载 {len(all_download_ids)} 张曲绘（无并发）...")
-    for song_id in all_download_ids:
-        if _download_one_cover(song_id, cover_dir, _LXNS_HEADERS):
+    for download_id, original_ids in id_map.items():
+        # 先下载到临时文件名
+        tmp_path = cover_dir / f'__tmp_{download_id}.png'
+        tmp_save_id = f'__tmp_{download_id}'
+        if _download_one_cover(download_id, tmp_save_id, cover_dir, _LXNS_HEADERS):
+            # 下载成功，复制给所有原始 ID
+            for oid in original_ids:
+                dst = cover_dir / f'{oid}.png'
+                if not dst.exists() or dst.stat().st_size < 5000:
+                    shutil.copy2(tmp_path, dst)
             downloaded += 1
-
-    log.info(f"曲绘下载完成: 成功 {downloaded}, 总计 {len(all_download_ids)}")
-    return downloaded
+        # 清理临时文件
+        tmp_path.unlink(missing_ok=True)
 
 
 # ==========================================
