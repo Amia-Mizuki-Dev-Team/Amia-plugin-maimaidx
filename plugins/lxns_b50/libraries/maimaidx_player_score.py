@@ -805,6 +805,118 @@ async def level_achievement_list_data(
     return msg
 
 
+def score_line_data(music: Music, level_index: int, target_ra: float) -> str:
+    """
+    计算分数线（达成率 -> 目标 Rating）
+
+    Params:
+        `music`: 曲目对象
+        `level_index`: 难度索引
+        `target_ra`: 目标 Rating
+    Returns:
+        `str`
+    """
+    ds = music.ds[level_index] if level_index < len(music.ds) else 0
+    if ds == 0:
+        return '该谱面定数数据异常。'
+
+    diff_label = diffs[level_index] if level_index < len(diffs) else f'Lv.{level_index}'
+    level_lbl = music.level[level_index] if level_index < len(music.level) else '?'
+
+    # 遍历各个评级阈值，计算所需达成率
+    thresholds = [
+        (100.5, 22.4, 'SSSp'),
+        (100.0, 21.6, 'SSS'),
+        (99.5, 21.1, 'SSp'),
+        (99.0, 20.8, 'SS'),
+        (98.0, 20.3, 'Sp'),
+        (97.0, 20.0, 'S'),
+        (94.0, 16.8, 'AAA'),
+        (90.0, 15.2, 'AA'),
+        (80.0, 13.6, 'A'),
+        (75.0, 12.0, 'BBB'),
+        (70.0, 11.2, 'BB'),
+        (60.0, 9.6, 'B'),
+        (50.0, 8.0, 'C'),
+    ]
+
+    lines = [f'📊 {music.title} (ID: {music.id}) 「{diff_label}」Lv.{level_lbl}({ds})\n']
+    lines.append(f'目标 Ra: {int(target_ra)}\n')
+
+    for ach_ceil, base_ra, rate_name in thresholds:
+        # 反推：ra = floor(ds * (achievement / 100) * baseRa)
+        # achievement = (target_ra / (ds * base_ra)) * 100
+        needed = (target_ra / (ds * base_ra)) * 100
+        if needed <= ach_ceil:
+            actual_needed = max(needed, 0.0)
+            lines.append(f'  {rate_name}: 达成率需 ≥ {actual_needed:.4f}%')
+        else:
+            lines.append(f'  {rate_name}: 无法达到（需超过 {ach_ceil:.1f}%）')
+
+    lines.append(f'\n当前定数 {ds}，每 0.1 定数变化约影响 {(0.1 / ds) * 100:.2f}% 达成率')
+    return '\n'.join(lines)
+
+
+async def player_score_data(qqid: int, music: Music) -> Union[MessageSegment, str]:
+    """
+    查询玩家单曲成绩
+
+    Params:
+        `qqid`: 用户QQ
+        `music`: 曲目对象
+    Returns:
+        `Union[MessageSegment, str]`
+    """
+    try:
+        records: List[Union[PlayInfoDefault, PlayInfoDev]] = []
+
+        # 策略一：使用水鱼 Developer-Token 查询单曲成绩
+        if maiApi.token:
+            dev_records = await maiApi.query_user_post_dev(qqid, music.id)
+            if dev_records:
+                records = dev_records
+        else:
+            # 策略二：通过 plate 查询获取全部成绩后过滤
+            version = list(set(_v for _v in list(plate_to_dx_version.values())))
+            plate_records = await maiApi.query_user_plate(qqid=qqid, version=version)
+            for r in plate_records:
+                if str(r.song_id) == music.id:
+                    records.append(r)
+
+        if not records:
+            return f'未查询到您在「{music.title}」上的游玩数据。'
+
+        lines = [f'🎵 {music.title} (ID: {music.id}) 成绩查询：\n']
+        for r in sorted(records, key=lambda x: x.level_index):
+            diff_label = diffs[r.level_index] if r.level_index < len(diffs) else f'Lv.{r.level_index}'
+            ds = music.ds[r.level_index] if r.level_index < len(music.ds) else 0
+            level_lbl = music.level[r.level_index] if r.level_index < len(music.level) else '?'
+            rate_label = score_Rank_l.get(r.rate, r.rate.upper()) if hasattr(r, 'rate') and r.rate else '-'
+            fc_label = fcl.get(r.fc, r.fc) if hasattr(r, 'fc') and r.fc else ''
+            fs_label = fsl.get(r.fs, r.fs) if hasattr(r, 'fs') and r.fs else ''
+
+            line = f'  「{diff_label}」Lv.{level_lbl}({ds}) '
+            line += f'{r.achievements:.4f}% | {rate_label}'
+            if fc_label:
+                line += f' | {fc_label}'
+            if fs_label:
+                line += f' | {fs_label}'
+            if hasattr(r, 'dxScore') and r.dxScore:
+                line += f' | DX: {r.dxScore}'
+            if hasattr(r, 'ra') and r.ra:
+                line += f' | Ra: {r.ra}'
+            lines.append(line)
+
+        msg = '\n'.join(lines)
+        data = MessageSegment.image(text_to_bytes_io(msg.strip()))
+    except (UserNotFoundError, UserDisabledQueryError) as e:
+        data = str(e)
+    except Exception as e:
+        log.error(traceback.format_exc())
+        data = f'未知错误：{type(e)}\n请联系Bot管理员'
+    return data
+
+
 async def rating_ranking_data(name: Optional[str], page: Optional[int]) -> Union[MessageSegment, str]:
     """
     查看查分器排行榜
