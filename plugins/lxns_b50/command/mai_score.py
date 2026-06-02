@@ -137,6 +137,9 @@ async def _(event: MessageEvent, message: Message = CommandArg(), user_id: Optio
         
     try:
         data = await player_score_data(qqid, music)
+        # 如果返回的是纯文本（用户无数据/未游玩），改用 draw_music_info 显示曲目详情
+        if isinstance(data, str) and draw_music_info:
+            data = await draw_music_info(music, qqid)
         await minfo.finish(data, reply_message=True)
     except FinishedException:
         raise
