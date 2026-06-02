@@ -4,8 +4,8 @@ import httpx
 import aiofiles
 from typing import Dict, Any, List, Optional
 from loguru import logger as log
-from ..config import maiconfig, music_file, coverdir, guess_file, music_db_path
-from .lib_music_db import music_db_cache, download_all_covers, generate_music_db, _download_one_cover, _LXNS_HEADERS
+from ..config import maiconfig, static, music_file, coverdir, guess_file, music_db_path
+from .lib_music_db import music_db_cache, download_all_covers, _download_one_cover, _LXNS_HEADERS
 from .maimaidx_api_data import maiApi
 
 class Music(dict):
@@ -121,15 +121,30 @@ class MaiMusic:
                 
             self.total_alias_list[sid] = list(merged_set)
 
+        # 加载本地 music_alias.json 补充别名
+        local_alias_file = static / 'common' / 'music_alias.json'
+        try:
+            async with aiofiles.open(local_alias_file, 'r', encoding='utf-8') as f:
+                content = await f.read()
+            local_aliases = json.loads(content)
+            for entry in local_aliases:
+                sid = str(entry.get('SongID'))
+                aliases = entry.get('Alias', [])
+                if aliases:
+                    existing = set(self.total_alias_list.get(sid, []))
+                    for alias in aliases:
+                        if alias:
+                            existing.add(str(alias).strip().lower())
+                    self.total_alias_list[sid] = list(existing)
+            log.info(f'本地别名库加载完成，共合并 {len(local_aliases)} 条记录')
+        except Exception as e:
+            log.warning(f'本地别名库加载失败: {e}')
+
         try:
             async with aiofiles.open(music_file, 'w', encoding='utf-8') as f:
                 await f.write(json.dumps(self.total_list, ensure_ascii=False, indent=4))
         except Exception:
             pass
-
-        # 从落雪曲目列表生成 musicDB.json（用于全量曲绘下载）
-        if lxns_music:
-            await generate_music_db(lxns_music, music_db_path)
 
         asyncio.create_task(self.download_missing_covers())
 
