@@ -333,7 +333,28 @@ async def generate(qqid: Optional[int] = None, username: Optional[str] = None, i
         
         for chart in userinfo.charts.sd + userinfo.charts.dx:
             music = mai.total_list.by_id(str(chart.song_id))
-            if music: chart.ds = music.ds[chart.level_index]
+            if music:
+                try:
+                    chart.ds = music.ds[chart.level_index]
+                except (IndexError, TypeError):
+                    if isinstance(music.get('difficulties'), dict):
+                        for diff_list in music.difficulties.values():
+                            for d in diff_list:
+                                if d.get('difficulty') == chart.level_index:
+                                    chart.ds = d.get('level_value', 0)
+                                    break
+                            if chart.ds:
+                                break
+            # DX 谱面可能使用 song_id + 10000 作为独立 ID
+            if not chart.ds and chart.type.lower() == 'dx':
+                dx_music = mai.total_list.by_id(str(chart.song_id + 10000))
+                if dx_music:
+                    try:
+                        chart.ds = dx_music.ds[chart.level_index]
+                    except (IndexError, TypeError):
+                        pass
+            if not chart.ds:
+                log.warning(f"[b50] 未找到定数: song_id={chart.song_id}, level_index={chart.level_index}, type={chart.type}")
 
         draw_best = DrawBest(userinfo, qqid, is_ap)
         msg = MessageSegment.image(image_to_base64(await draw_best.draw()))
