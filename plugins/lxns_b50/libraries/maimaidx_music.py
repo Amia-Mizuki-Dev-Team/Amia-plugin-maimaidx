@@ -66,11 +66,19 @@ class MaiMusic:
                             lxns_music = res_json["data"]
                         elif isinstance(res_json, list):
                             lxns_music = res_json
-                            
-                        for song in lxns_music:
-                            if isinstance(song, dict) and 'id' in song:
-                                sid = str(song['id'])
-                                lxns_aliases[sid] = song.get('aliases', [])
+
+                    # 使用落雪专用别名端点获取完整别名数据
+                    alias_res = await client.get(
+                        "https://maimai.lxns.net/api/v0/maimai/alias/list",
+                        headers=headers
+                    )
+                    if alias_res.status_code == 200:
+                        alias_data = alias_res.json()
+                        aliases_list = alias_data.get("aliases", []) if isinstance(alias_data, dict) else alias_data
+                        for entry in aliases_list:
+                            if isinstance(entry, dict) and 'song_id' in entry:
+                                sid = str(entry['song_id'])
+                                lxns_aliases[sid] = entry.get('aliases', [])
                 except Exception as e:
                     log.error(f"同步拉取落雪数据源发生异常: {e}")
 
