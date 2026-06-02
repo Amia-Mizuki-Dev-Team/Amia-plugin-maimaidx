@@ -155,7 +155,7 @@ class MaiApi:
                         ))
                     return UserInfo(
                         nickname=profile.get("name", username or str(qqid)),
-                        rating=data.get("total", 0),
+                        rating=data.get("total", data.get("standard_total", 0) + data.get("dx_total", 0)),
                         additional_rating=profile.get("course_rank", 0),
                         plate=str(profile.get("name_plate", {}).get("id", "")) if profile.get("name_plate") else "",
                         username=str(profile.get("icon", {}).get("id", "")) if profile.get("icon") else "",
