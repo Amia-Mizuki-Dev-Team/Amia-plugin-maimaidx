@@ -1,6 +1,6 @@
 import re
 import traceback
-from typing import Optional
+from typing import Any, Optional
 from nonebot import on_command
 from nonebot.adapters.onebot.v11 import Bot, Message, MessageEvent, MessageSegment
 from nonebot.params import CommandArg, Depends
@@ -43,6 +43,34 @@ def get_at_qq(message: MessageEvent) -> Optional[int]:
     for item in message.message:
         if isinstance(item, MessageSegment) and item.type == 'at' and item.data['qq'] != 'all':
             return int(item.data['qq'])
+    return None
+
+
+def _search_music(name: str) -> Optional[Any]:
+    """
+    综合搜索曲目：按 ID → 精确标题 → 别名 → 大小写不敏感标题
+    
+    Params:
+        `name`: 搜索关键字
+    Returns:
+        `Optional[Music]`
+    """
+    music = mai.total_list.by_id(name)
+    if music:
+        return music
+    music = mai.total_list.by_title(name)
+    if music:
+        return music
+    # 别名检索
+    for sid, aliases in mai.total_alias_list.items():
+        if name.lower() in [a.lower() for a in aliases]:
+            music = mai.total_list.by_id(sid)
+            if music:
+                return music
+    # 大小写不敏感标题匹配
+    for m in mai.total_list:
+        if m.title.lower() == name.lower():
+            return m
     return None
 
 
@@ -103,7 +131,7 @@ async def _(event: MessageEvent, message: Message = CommandArg(), user_id: Optio
     if not name:
         await minfo.finish('请输入曲名或ID', reply_message=True)
         
-    music = mai.total_list.by_id(name) or mai.total_list.by_title(name)
+    music = _search_music(name)
     if not music:
         await minfo.finish('未找到该曲目，请检查输入', reply_message=True)
         
