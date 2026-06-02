@@ -102,16 +102,38 @@ class MaiApi:
         # 策略一：落雪 API（需要 lxnstoken）
         if maiconfig.lxnstoken and qqid:
             try:
-                endpoint = f"{LXNS_BASE}/maimai/player/qq/{qqid}/bests"
+                profile = {}
+                # AP 查询需要 friend_code（/qq/{qq}/bests/ap 不存在）
                 if is_ap:
-                    endpoint += "/ap"
-                async with httpx.AsyncClient(timeout=15) as client:
-                    res = await client.get(endpoint, headers=self.headers)
+                    async with httpx.AsyncClient(timeout=15) as client:
+                        profile_res = await client.get(
+                            f"{LXNS_BASE}/maimai/player/qq/{qqid}",
+                            headers=self.headers
+                        )
+                    if profile_res.status_code != 200:
+                        raise ValueError("QQ 查询失败，无法获取 friend_code")
+                    pdata = profile_res.json().get("data", {})
+                    friend_code = pdata.get("friend_code")
+                    if not friend_code:
+                        raise ValueError("未获取到 friend_code")
+                    profile = pdata
+                    endpoint = f"{LXNS_BASE}/maimai/player/{friend_code}/bests/ap"
+                    async with httpx.AsyncClient(timeout=15) as client:
+                        res = await client.get(endpoint, headers=self.headers)
+                else:
+                    endpoint = f"{LXNS_BASE}/maimai/player/qq/{qqid}/bests"
+                    async with httpx.AsyncClient(timeout=15) as client:
+                        res = await client.get(endpoint, headers=self.headers)
+                    if res.status_code == 200:
+                        async with httpx.AsyncClient(timeout=15) as client2:
+                            profile_res = await client2.get(
+                                f"{LXNS_BASE}/maimai/player/qq/{qqid}",
+                                headers=self.headers
+                            )
+                            profile = profile_res.json().get("data", {}) if profile_res.status_code == 200 else {}
+
                 if res.status_code == 200:
                     data = res.json().get("data", {})
-                    # 获取玩家基本信息用于 nickname / plate
-                    profile_res = await client.get(f"{LXNS_BASE}/maimai/player/qq/{qqid}", headers=self.headers)
-                    profile = profile_res.json().get("data", {}) if profile_res.status_code == 200 else {}
                     sd_list = []
                     dx_list = []
                     for c in data.get("standard", []):
