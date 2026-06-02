@@ -129,8 +129,9 @@ class MaiMusic:
                 
             self.total_alias_list[sid] = list(merged_set)
 
-        # 加载本地 music_alias.json 补充别名
+        # 加载本地 music_alias.json 作为基础，再用 API 数据补充
         local_alias_file = static / 'common' / 'music_alias.json'
+        local_aliases_loaded = 0
         try:
             async with aiofiles.open(local_alias_file, 'r', encoding='utf-8') as f:
                 content = await f.read()
@@ -138,15 +139,30 @@ class MaiMusic:
             for entry in local_aliases:
                 sid = str(entry.get('SongID'))
                 aliases = entry.get('Alias', [])
-                if aliases:
-                    existing = set(self.total_alias_list.get(sid, []))
-                    for alias in aliases:
-                        if alias:
-                            existing.add(str(alias).strip().lower())
-                    self.total_alias_list[sid] = list(existing)
-            log.info(f'本地别名库加载完成，共合并 {len(local_aliases)} 条记录')
-        except Exception as e:
-            log.warning(f'本地别名库加载失败: {e}')
+                if sid not in self.total_alias_list:
+                    self.total_alias_list[sid] = []
+                existing = set(self.total_alias_list[sid])
+                for alias in aliases:
+                    if alias:
+                        existing.add(str(alias).strip().lower())
+                self.total_alias_list[sid] = list(existing)
+            local_aliases_loaded = len(local_aliases)
+        except Exception:
+            pass
+
+        # 将合并后的别名持久化保存到 music_alias.json
+        if self.total_alias_list:
+            try:
+                alias_save = [
+                    {"SongID": int(sid), "Name": "", "Alias": aliases}
+                    for sid, aliases in self.total_alias_list.items()
+                    if aliases
+                ]
+                async with aiofiles.open(local_alias_file, 'w', encoding='utf-8') as f:
+                    await f.write(json.dumps(alias_save, ensure_ascii=False, indent=2))
+                log.info(f'别名库已持久化保存，共 {len(alias_save)} 条记录（本地加载 {local_aliases_loaded} 条 + API 补充）')
+            except Exception as e:
+                log.warning(f'别名库持久化保存失败: {e}')
 
         try:
             async with aiofiles.open(music_file, 'w', encoding='utf-8') as f:
