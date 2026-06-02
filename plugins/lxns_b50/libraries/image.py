@@ -87,15 +87,18 @@ class DrawText:
             # 逐字绘制以控制字间距
             font = ImageFont.truetype(self._font, size)
             x, y = pos_x, pos_y
-            # 使用字体 size 作为行高近似，确保中英文都能正确垂直居中
-            if anchor in ('lm',):
-                y -= size // 2
+            # 基线偏移：从垂直中心(lm)到基线(ls)的大致偏移量
+            baseline_offset = size // 2
+            if anchor == 'lt':
+                pass  # lt → ls 无需偏移
+            elif anchor in ('lm',):
+                y -= baseline_offset
             elif anchor == 'mm':
                 total_w = sum(font.getbbox(c)[2] for c in text) + char_spacing * (len(text) - 1)
                 x -= total_w // 2
-                y -= size // 2
+                y -= baseline_offset
             for c in text:
-                self._img.text((x, y), c, color, font, anchor='lt',
+                self._img.text((x, y), c, color, font, anchor='ls',
                                stroke_width=stroke_width, stroke_fill=stroke_fill)
                 x += font.getbbox(c)[2] + char_spacing
         elif multiline:
