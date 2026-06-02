@@ -9,11 +9,13 @@ from .lib_music_db import music_db_cache, download_all_covers, _download_one_cov
 from .maimaidx_api_data import maiApi
 
 class Music(dict):
-    """支持递归属性访问的 dict 子类，嵌套 dict 也可通过属性访问"""
+    """支持递归属性访问的 dict 子类，嵌套 dict 和列表中的 dict 也可通过属性访问"""
     def __getattr__(self, item):
         val = self.get(item)
         if isinstance(val, dict):
             return Music(val)
+        if isinstance(val, list):
+            return [Music(v) if isinstance(v, dict) else v for v in val]
         return val
     def __setattr__(self, key, value):
         self[key] = value
@@ -42,14 +44,20 @@ class MaiMusic:
     # 动态生成按定数等级分类的歌曲字典，兼容定数表调用
     # ==========================================
     @property
-    def total_level_data(self) -> Dict[str, MusicList]:
-        res = {}
+    def total_level_data(self) -> Dict[str, Dict[str, MusicList]]:
+        """按定数等级分组：{等级: {定数值: MusicList}}"""
+        res: Dict[str, Dict[str, MusicList]] = {}
         for music in self.total_list:
             for lv in music.get('level', []):
                 if lv not in res:
-                    res[lv] = MusicList()
-                if music not in res[lv]:
-                    res[lv].append(music)
+                    res[lv] = {}
+                # 找出该难度对应的定数
+                idx = music.level.index(lv)
+                ds = str(music.ds[idx]) if idx < len(music.ds) else '0'
+                if ds not in res[lv]:
+                    res[lv][ds] = MusicList()
+                if music not in res[lv][ds]:
+                    res[lv][ds].append(music)
         return res
 
     async def get_music(self) -> None:
