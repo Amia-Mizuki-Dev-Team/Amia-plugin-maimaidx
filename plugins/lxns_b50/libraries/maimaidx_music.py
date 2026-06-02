@@ -85,21 +85,21 @@ class MaiMusic:
                             lxns_music = res_json["data"]
                         elif isinstance(res_json, list):
                             lxns_music = res_json
-
-                    # 使用落雪专用别名端点获取完整别名数据
-                    alias_res = await client.get(
-                        "https://maimai.lxns.net/api/v0/maimai/alias/list",
-                        headers=headers
-                    )
-                    if alias_res.status_code == 200:
-                        alias_data = alias_res.json()
-                        aliases_list = alias_data.get("aliases", []) if isinstance(alias_data, dict) else alias_data
-                        for entry in aliases_list:
-                            if isinstance(entry, dict) and 'song_id' in entry:
-                                sid = str(entry['song_id'])
-                                lxns_aliases[sid] = entry.get('aliases', [])
                 except Exception as e:
                     log.error(f"同步拉取落雪数据源发生异常: {e}")
+
+            # 落雪别名端点是公共 API，无需 token，始终拉取
+            try:
+                res = await client.get("https://maimai.lxns.net/api/v0/maimai/alias/list")
+                if res.status_code == 200:
+                    alias_data = res.json()
+                    aliases_list = alias_data.get("aliases", []) if isinstance(alias_data, dict) else alias_data
+                    for entry in aliases_list:
+                        if isinstance(entry, dict) and 'song_id' in entry:
+                            sid = str(entry['song_id'])
+                            lxns_aliases[sid] = entry.get('aliases', [])
+            except Exception as e:
+                log.error(f"拉取落雪别名数据源发生异常: {e}")
 
             try:
                 res = await client.get("https://www.diving-fish.com/api/maimaidxprober/music_data")
