@@ -103,34 +103,33 @@ class MaiApi:
         if maiconfig.lxnstoken and qqid:
             try:
                 profile = {}
-                # AP 查询需要 friend_code（/qq/{qq}/bests/ap 不存在）
-                if is_ap:
-                    async with httpx.AsyncClient(timeout=15) as client:
-                        profile_res = await client.get(
-                            f"{LXNS_BASE}/maimai/player/qq/{qqid}",
-                            headers=self.headers
-                        )
-                    if profile_res.status_code != 200:
-                        raise ValueError("QQ 查询失败，无法获取 friend_code")
+                # 先通过 QQ 获取 friend_code 和资料（用于头像框渲染）
+                async with httpx.AsyncClient(timeout=15) as client:
+                    profile_res = await client.get(
+                        f"{LXNS_BASE}/maimai/player/qq/{qqid}",
+                        headers=self.headers
+                    )
+                if profile_res.status_code == 200:
                     pdata = profile_res.json().get("data", {})
                     friend_code = pdata.get("friend_code")
-                    if not friend_code:
-                        raise ValueError("未获取到 friend_code")
                     profile = pdata
-                    endpoint = f"{LXNS_BASE}/maimai/player/{friend_code}/bests/ap"
-                    async with httpx.AsyncClient(timeout=15) as client:
-                        res = await client.get(endpoint, headers=self.headers)
                 else:
-                    endpoint = f"{LXNS_BASE}/maimai/player/qq/{qqid}/bests"
-                    async with httpx.AsyncClient(timeout=15) as client:
-                        res = await client.get(endpoint, headers=self.headers)
-                    if res.status_code == 200:
-                        async with httpx.AsyncClient(timeout=15) as client2:
-                            profile_res = await client2.get(
-                                f"{LXNS_BASE}/maimai/player/qq/{qqid}",
-                                headers=self.headers
-                            )
-                            profile = profile_res.json().get("data", {}) if profile_res.status_code == 200 else {}
+                    friend_code = None
+
+                # AP 查询需要 friend_code 端点（/qq/{qq}/bests/ap 不存在）
+                if is_ap:
+                    if not friend_code:
+                        raise ValueError("未获取到 friend_code，无法查询 AP50")
+                    endpoint = f"{LXNS_BASE}/maimai/player/{friend_code}/bests/ap"
+                else:
+                    # B50 优先用 friend_code 端点（头像框资料更完整）
+                    if friend_code:
+                        endpoint = f"{LXNS_BASE}/maimai/player/{friend_code}/bests"
+                    else:
+                        endpoint = f"{LXNS_BASE}/maimai/player/qq/{qqid}/bests"
+
+                async with httpx.AsyncClient(timeout=15) as client:
+                    res = await client.get(endpoint, headers=self.headers)
 
                 if res.status_code == 200:
                     data = res.json().get("data", {})
