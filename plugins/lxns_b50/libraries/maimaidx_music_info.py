@@ -67,7 +67,8 @@ async def draw_music_info(
     songbg = Image.open(music_picture(music.id)).resize((280, 280))
     im.alpha_composite(rounded_corners(songbg, 17, (True, False, False, True)), (110, 180))
     im.alpha_composite(Image.open(maimaidir / f'{music.basic_info.get("from")}.png').resize((182, 90)), (800, 370))
-    im.alpha_composite(Image.open(maimaidir / f'{music.type}.png').resize((80, 30)), (410, 375))
+    type_name = 'SD' if music.type.lower() == 'standard' else music.type.upper()
+    im.alpha_composite(Image.open(maimaidir / f'{type_name}.png').resize((80, 30)), (410, 375))
 
     title = music.title
     if coloumWidth(title) > 40:
@@ -173,7 +174,8 @@ async def draw_music_play_data(qqid: int, music_id: str) -> Union[str, MessageSe
         im.alpha_composite(cover.resize((300, 300)), (100, 260))
         im.alpha_composite(Image.open(maimaidir / f'info-{category[music.basic_info.genre]}.png'), (100, 260))
         im.alpha_composite(Image.open(maimaidir / f'{music.basic_info.get("from")}.png').resize((183, 90)), (295, 205))
-        im.alpha_composite(Image.open(maimaidir / f'{music.type}.png').resize((55, 20)), (350, 560))
+        type_name = 'SD' if music.type.lower() == 'standard' else music.type.upper()
+        im.alpha_composite(Image.open(maimaidir / f'{type_name}.png').resize((55, 20)), (350, 560))
         
         color = (124, 129, 255, 255)
         artist = music.basic_info.artist

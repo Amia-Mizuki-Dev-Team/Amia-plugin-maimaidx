@@ -108,7 +108,8 @@ class ScoreBaseImage:
                 x += 276
 
             cover = Image.open(music_picture(info.song_id)).resize((75, 75))
-            version = Image.open(maidir / f'{info.type.upper()}.png').resize((37, 14))
+            type_name = 'SD' if info.type.lower() == 'standard' else info.type.upper()
+            version = Image.open(maidir / f'{type_name}.png').resize((37, 14))
             if info.rate.islower():
                 rate = Image.open(maidir / f'UI_TTR_Rank_{score_Rank_l[info.rate]}.png').resize((63, 28))
             else:

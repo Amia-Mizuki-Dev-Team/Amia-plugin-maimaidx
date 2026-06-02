@@ -158,7 +158,8 @@ class DrawScore(ScoreBaseImage):
             
             self._im.alpha_composite(self._rise[_d.level_index], (x + 30, y))
             self._im.alpha_composite(Image.open(music_picture(_d.song_id)).resize((80, 80)), (x + 55, y + 40))
-            self._im.alpha_composite(Image.open(maimaidir / f'{_d.type.upper()}.png').resize((60, 22)), (x + 240, y + 114))
+            type_name = 'SD' if _d.type.lower() == 'standard' else _d.type.upper()
+            self._im.alpha_composite(Image.open(maimaidir / f'{type_name}.png').resize((60, 22)), (x + 240, y + 114))
             if _d.oldrate:
                 oldrate = Image.open(maimaidir / f'UI_TTR_Rank_{_d.oldrate}.png').resize((63, 28))
                 self._im.alpha_composite(oldrate, (x + 145, y + 82))
