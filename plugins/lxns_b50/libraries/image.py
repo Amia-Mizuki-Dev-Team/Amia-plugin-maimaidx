@@ -78,13 +78,32 @@ class DrawText:
         anchor: str = 'lt',
         stroke_width: int = 0,
         stroke_fill: Tuple[int, int, int, int] = (0, 0, 0, 0),
-        multiline: bool = False
+        multiline: bool = False,
+        char_spacing: int = 0,
     ) -> None:
         font = ImageFont.truetype(self._font, size)
-        if multiline:
+        text = str(text)
+        if char_spacing:
+            # 逐字绘制以控制字间距
+            font = ImageFont.truetype(self._font, size)
+            x, y = pos_x, pos_y
+            font_bbox = font.getbbox('A')
+            font_h = font_bbox[3] - font_bbox[1]
+            # lm → lt 需要 y 偏移半字高
+            if anchor in ('lm',):
+                y -= font_h // 2
+            elif anchor == 'mm':
+                total_w = sum(font.getbbox(c)[2] for c in text) + char_spacing * (len(text) - 1)
+                x -= total_w // 2
+                y -= font_h // 2
+            for c in text:
+                self._img.text((x, y), c, color, font, anchor='lt',
+                               stroke_width=stroke_width, stroke_fill=stroke_fill)
+                x += font.getbbox(c)[2] + char_spacing
+        elif multiline:
             self._img.multiline_text(
                 (pos_x, pos_y), 
-                str(text), 
+                text, 
                 color, 
                 font, 
                 anchor, 
@@ -94,7 +113,7 @@ class DrawText:
         else:
             self._img.text(
                 (pos_x, pos_y), 
-                str(text), 
+                text, 
                 color, 
                 font, 
                 anchor, 
