@@ -13,6 +13,7 @@ from ..config import *
 from .image import *
 from .maimaidx_api_data import *
 from .maimaidx_best_50 import ScoreBaseImage, changeColumnWidth, coloumWidth, computeRa
+from .maimaidx_error import UserNotFoundError, UserDisabledQueryError
 from .maimaidx_model import ChartInfo, PlanInfo, PlayInfoDefault, PlayInfoDev, RaMusic
 from .maimaidx_music import Music, mai
 from .tool import run_chrome_to_base64
