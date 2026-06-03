@@ -249,7 +249,7 @@ class DrawBest(ScoreBaseImage):
         self._im.alpha_composite(ClassLevel, (620, 60))
         self._im.alpha_composite(rating, (435, 160))
 
-        self._sy.draw(445, 135, 25, self.userName, (0, 0, 0, 255), 'lm', char_spacing=-1)
+        self._sy.draw(445, 135, 25, self.userName, (0, 0, 0, 255), 'lm', char_spacing=-2)
         sdrating, dxrating = sum([_.ra for _ in self.sdBest]), sum([_.ra for _ in self.dxBest])
         
         if self.is_ap:
