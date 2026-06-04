@@ -19,9 +19,13 @@ class Config(BaseModel):
     lxnspath: Optional[str] = Field(default=None, validation_alias=AliasChoices("lxnspath", "LXNSPATH", "lxns_path", "LXNS_PATH"))
     lxnstoken: str = Field(default="gAtzZcA6iXdihYhBtbw8VeXUtnFsMUI-Iwdyd-_ZvKM=", validation_alias=AliasChoices("lxnstoken", "LXNSTOKEN", "lxns_token", "LXNS_TOKEN"))
     
-    # 水鱼数据源路径与 Token
-    maimaidxpath: Optional[str] = Field(default=None, validation_alias=AliasChoices("maimaidxpath", "MAIMAIDXPATH", "maimai_dx_path", "MAIMAIDX_PATH"))
+    # 水鱼数据源 Token
     maimaidxtoken: Optional[str] = Field(default="", validation_alias=AliasChoices("maimaidxtoken", "MAIMAIDXTOKEN", "maimai_dx_token", "MAIMAIDX_TOKEN"))
+    
+    # lxns_b50 数据资源路径（代替 MAIMAIDXPATH）
+    lxns_b50_path: Optional[str] = Field(default=None, validation_alias=AliasChoices(
+        "lxns_b50_path", "LXNS_B50_PATH", "lxnsb50path", "LXNSB50PATH"
+    ))
 
     # ==========================================
     # 【mai_sync_data 路径 — 默认相对 bot 运行目录下的 data/mai_sync_data】
@@ -62,15 +66,15 @@ except Exception as e:
 # ==========================================
 Root: Path = Path(__file__).parent.absolute()
 
-# 终极健壮性自愈逻辑：无论你大写填了哪一个，相互借用绝对不返回 None
+# 路径优先级：LXNS_B50_PATH > LXNSPATH > 默认 data/lxns_b50
 determined_path = "data/lxns_b50"
 
-if maiconfig.lxnspath:
+if maiconfig.lxns_b50_path:
+    determined_path = maiconfig.lxns_b50_path
+elif maiconfig.lxnspath:
     determined_path = maiconfig.lxnspath
-elif maiconfig.maimaidxpath:
-    determined_path = maiconfig.maimaidxpath
 else:
-    log.warning("未在 .env 中成功解析到路径配置，系统将默认挂载至 data/lxns_b50 目录。")
+    log.warning("未在 .env 中设置 LXNS_B50_PATH，系统将默认挂载至 data/lxns_b50 目录。")
 
 static: Path = Path(determined_path)
 
