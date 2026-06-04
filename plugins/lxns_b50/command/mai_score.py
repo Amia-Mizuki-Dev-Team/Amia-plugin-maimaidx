@@ -7,6 +7,11 @@ from nonebot.params import CommandArg, Depends
 from nonebot.exception import FinishedException  # 引入框架正常退出异常
 from loguru import logger as log
 
+try:
+    from zhconv import convert as zh_convert
+except ImportError:
+    zh_convert = None
+
 from ..libraries.maimaidx_best_50 import generate
 from ..libraries.maimaidx_error import UserNotBindLXNSError, UserNotBindFishError
 from ..libraries.maimaidx_music import mai
@@ -48,7 +53,7 @@ def get_at_qq(message: MessageEvent) -> Optional[int]:
 
 def _search_music(name: str) -> Optional[Any]:
     """
-    综合搜索曲目：按 ID → 精确标题 → 别名 → 大小写不敏感标题
+    综合搜索曲目：按 ID → 精确标题 → 别名(含简繁) → 大小写不敏感标题
     
     Params:
         `name`: 搜索关键字
@@ -62,14 +67,26 @@ def _search_music(name: str) -> Optional[Any]:
     if music:
         return music
     # 别名检索
+    name_lower = name.lower()
     for sid, aliases in mai.total_alias_list.items():
-        if name.lower() in [a.lower() for a in aliases]:
+        if name_lower in [a.lower() for a in aliases]:
             music = mai.total_list.by_id(sid)
             if music:
                 return music
+    # 简繁转换后再尝试别名检索（如 海底谭 → 海底譚）
+    if zh_convert:
+        name_sc = zh_convert(name_lower, 'zh-cn')   # 转简体
+        name_tw = zh_convert(name_lower, 'zh-tw')   # 转繁体
+        if name_sc != name_lower or name_tw != name_lower:
+            for sid, aliases in mai.total_alias_list.items():
+                alias_lower = [a.lower() for a in aliases]
+                if name_sc in alias_lower or name_tw in alias_lower:
+                    music = mai.total_list.by_id(sid)
+                    if music:
+                        return music
     # 大小写不敏感标题匹配
     for m in mai.total_list:
-        if m.title.lower() == name.lower():
+        if m.title.lower() == name_lower:
             return m
     return None
 
