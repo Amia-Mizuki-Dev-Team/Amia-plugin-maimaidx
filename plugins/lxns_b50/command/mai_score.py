@@ -53,7 +53,7 @@ def get_at_qq(message: MessageEvent) -> Optional[int]:
 
 def _search_music(name: str) -> Optional[Any]:
     """
-    综合搜索曲目：按 ID → 精确标题 → 别名(含简繁) → 大小写不敏感标题
+    综合搜索曲目：按 ID → 精确标题 → 别名(含子串) → 大小写不敏感标题
     
     Params:
         `name`: 搜索关键字
@@ -66,21 +66,28 @@ def _search_music(name: str) -> Optional[Any]:
     music = mai.total_list.by_title(name)
     if music:
         return music
-    # 别名检索
+    # 别名检索（精确匹配 + 子串匹配）
     name_lower = name.lower()
     for sid, aliases in mai.total_alias_list.items():
-        if name_lower in [a.lower() for a in aliases]:
+        alias_lower = [a.lower() for a in aliases]
+        # 精确匹配
+        if name_lower in alias_lower:
             music = mai.total_list.by_id(sid)
             if music:
                 return music
-    # 简繁转换后再尝试别名检索（如 海底谭 → 海底譚）
+        # 子串匹配：搜索词是某个别名的子串（长度 >= 2 避免单字误匹配）
+        if len(name_lower) >= 2 and any(name_lower in a for a in alias_lower):
+            music = mai.total_list.by_id(sid)
+            if music:
+                return music
+    # 简繁转换后再尝试别名检索
     if zh_convert:
-        name_sc = zh_convert(name_lower, 'zh-cn')   # 转简体
-        name_tw = zh_convert(name_lower, 'zh-tw')   # 转繁体
-        if name_sc != name_lower or name_tw != name_lower:
+        for src in (zh_convert(name_lower, 'zh-cn'), zh_convert(name_lower, 'zh-tw')):
+            if src == name_lower:
+                continue
             for sid, aliases in mai.total_alias_list.items():
                 alias_lower = [a.lower() for a in aliases]
-                if name_sc in alias_lower or name_tw in alias_lower:
+                if src in alias_lower or (len(src) >= 2 and any(src in a for a in alias_lower)):
                     music = mai.total_list.by_id(sid)
                     if music:
                         return music
