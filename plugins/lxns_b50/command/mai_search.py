@@ -264,8 +264,9 @@ async def _(event: MessageEvent, end: str = Endswith()):
         alias_data = []
         for sid, aliases in matched:
             music = mai.total_list.by_id(sid)
-            name_title = music.title if music else ""
-            alias_data.append(Alias(SongID=int(sid), Name=name_title, Alias=aliases))
+            if not music:
+                continue  # 跳过曲库中不存在的 ID
+            alias_data.append(Alias(SongID=int(sid), Name=music.title, Alias=aliases))
     if not alias_data:
         obj = await maiApi.get_songs(name)
         if obj:
