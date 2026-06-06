@@ -96,8 +96,8 @@ class MaiApi:
             if not friend_code:
                 return []
 
-            # 用 friend_code 查询 rating 趋势
-            async with httpx.AsyncClient(timeout=15) as client:
+            # 用 friend_code 查询 rating 趋势（趋势数据量大，给 60s 超时）
+            async with httpx.AsyncClient(timeout=60) as client:
                 res = await client.get(
                     f"{LXNS_BASE}/maimai/player/{friend_code}/trend",
                     headers=self.headers
@@ -121,7 +121,7 @@ class MaiApi:
                     return converted
             return []
         except Exception as e:
-            log.error(f"拉取落雪 Rating 变动历史记录失败: {e}")
+            log.error(f"拉取落雪 Rating 变动历史记录失败: [{type(e).__name__}] {e}")
             return []
 
     async def query_user_song_score(self, qqid: int, music_id: str) -> "Optional[List[ChartInfo]]":
