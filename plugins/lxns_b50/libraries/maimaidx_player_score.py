@@ -16,6 +16,7 @@ from .maimaidx_best_50 import ScoreBaseImage, changeColumnWidth, coloumWidth, co
 from .maimaidx_error import UserNotFoundError, UserDisabledQueryError, UserNotExistsError
 from .maimaidx_model import ChartInfo, PlanInfo, PlayInfoDefault, PlayInfoDev, RaMusic
 from .maimaidx_music import Music, mai
+from .maimaidx_music_info import draw_music_info
 from .tool import run_chrome_to_base64
 
 @dataclass
@@ -914,49 +915,9 @@ async def player_score_data(qqid: int, music: Music) -> Union[MessageSegment, st
         else:
             if not await _try_fish():
                 await _try_lxns()
-                for r in plate_records:
-                    if str(r.song_id) == music.id:
-                        records.append(r)
 
-        if not records:
-            # 无成绩时显示所有难度为"未游玩"
-            lines = [f'🎵 {music.title} (ID: {music.id}) 成绩查询：\n']
-            for idx in range(len(music.level)):
-                diff_label = diffs[idx] if idx < len(diffs) else f'Lv.{idx}'
-                ds = music.ds[idx] if idx < len(music.ds) else 0
-                level_lbl = music.level[idx] if idx < len(music.level) else '?'
-                line = f'  「{diff_label}」Lv.{level_lbl}({ds}) 未游玩'
-                lines.append(line)
-            if not lines[1:]:
-                lines.append('  （该曲目无谱面数据）')
-            msg = '\n'.join(lines)
-            data = MessageSegment.image(text_to_bytes_io(msg.strip()))
-        else:
-            lines = [f'🎵 {music.title} (ID: {music.id}) 成绩查询：\n']
-            for r in sorted(records, key=lambda x: x.level_index):
-                diff_label = diffs[r.level_index] if r.level_index < len(diffs) else f'Lv.{r.level_index}'
-                ds = music.ds[r.level_index] if r.level_index < len(music.ds) else 0
-                level_lbl = music.level[r.level_index] if r.level_index < len(music.level) else '?'
-                rate_label = score_Rank_l.get(r.rate, r.rate.upper()) if hasattr(r, 'rate') and r.rate else '-'
-                fc_label = fcl.get(r.fc, r.fc) if hasattr(r, 'fc') and r.fc else ''
-                fs_label = fsl.get(r.fs, r.fs) if hasattr(r, 'fs') and r.fs else ''
-
-                line = f'  「{diff_label}」Lv.{level_lbl}({ds}) '
-                line += f'{r.achievements:.4f}% | {rate_label}'
-                if fc_label:
-                    line += f' | {fc_label}'
-                if fs_label:
-                    line += f' | {fs_label}'
-                if hasattr(r, 'dxScore') and r.dxScore:
-                    line += f' | DX: {r.dxScore}'
-                if hasattr(r, 'ra') and r.ra:
-                    line += f' | Ra: {r.ra}'
-                lines.append(line)
-
-            msg = '\n'.join(lines)
-            data = MessageSegment.image(text_to_bytes_io(msg.strip()))
-    except (UserNotFoundError, UserDisabledQueryError) as e:
-        data = str(e)
+        # 统一使用 draw_music_info 渲染精美曲目详情图（含/不含成绩）
+        data = await draw_music_info(music, qqid)
     except Exception as e:
         log.error(traceback.format_exc())
         data = f'未知错误：{type(e)}\n请联系Bot管理员'
