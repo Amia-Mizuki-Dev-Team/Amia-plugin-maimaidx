@@ -82,15 +82,36 @@ class MaiApi:
         """获取落雪平台玩家的历史 Rating 变动轨迹数据"""
         if not maiconfig.lxnstoken:
             return []
-        async with httpx.AsyncClient(timeout=10) as client:
-            try:
-                res = await client.get(f"{LXNS_BASE}/maimai/player/qq/{qqid}/history", headers=self.headers)
-                if res.status_code == 200:
-                    data = res.json()
-                    return data if isinstance(data, list) else data.get("history", [])
-            except Exception as e:
-                log.error(f"拉取落雪 Rating 变动历史记录失败: {e}")
-        return []
+        try:
+            # 先通过 QQ 获取 friend_code
+            async with httpx.AsyncClient(timeout=15) as client:
+                profile_res = await client.get(
+                    f"{LXNS_BASE}/maimai/player/qq/{qqid}",
+                    headers=self.headers
+                )
+            if profile_res.status_code != 200:
+                return []
+            pdata = profile_res.json().get("data", {})
+            friend_code = pdata.get("friend_code")
+            if not friend_code:
+                return []
+
+            # 用 friend_code 查询 rating 趋势
+            async with httpx.AsyncClient(timeout=15) as client:
+                res = await client.get(
+                    f"{LXNS_BASE}/maimai/player/{friend_code}/trend",
+                    headers=self.headers
+                )
+            if res.status_code == 200:
+                data = res.json()
+                if isinstance(data, list):
+                    return data
+                if isinstance(data, dict):
+                    return data.get("data", data.get("trend", []))
+            return []
+        except Exception as e:
+            log.error(f"拉取落雪 Rating 变动历史记录失败: {e}")
+            return []
 
     async def query_user_song_score(self, qqid: int, music_id: str) -> Optional[List[ChartInfo]]:
         """
