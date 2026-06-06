@@ -185,20 +185,14 @@ async def _(bot: Bot, event: MessageEvent):
         raw_timestamps = [time.strftime("%m-%d", time.localtime(c["time"])) for c in curves]
         raw_ratings = [c["rating"] for c in curves]
         
-        # 按 Rating 分段：每段只保留头尾，段内中间点剔除
-        # 段大小 = 500（以 maimai DX Rating 区间为参考）
-        segment = 500
+        # 阈值 = 全距 × 20%，超过阈值时才标注数据点
+        rng = max(raw_ratings) - min(raw_ratings)
+        threshold = rng * 0.2 if rng > 0 else 0
         timestamps, ratings = [raw_timestamps[0]], [raw_ratings[0]]
-        for i in range(1, len(raw_ratings) - 1):
-            cur_seg = raw_ratings[i] // segment
-            prev_seg = raw_ratings[i - 1] // segment
-            next_seg = raw_ratings[i + 1] // segment
-            # 进入新段 或 即将离开当前段时保留
-            if cur_seg != prev_seg or cur_seg != next_seg:
+        for i in range(1, len(raw_ratings)):
+            if abs(raw_ratings[i] - ratings[-1]) > threshold:
                 timestamps.append(raw_timestamps[i])
                 ratings.append(raw_ratings[i])
-        timestamps.append(raw_timestamps[-1])
-        ratings.append(raw_ratings[-1])
         
         import math
         y_min = math.floor(min(ratings))
