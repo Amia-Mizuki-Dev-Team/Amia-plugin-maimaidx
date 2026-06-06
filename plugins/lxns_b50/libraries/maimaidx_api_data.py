@@ -140,38 +140,38 @@ class MaiApi:
             if not friend_code:
                 return None
 
-            # 查询单曲所有谱面成绩
-            async with httpx.AsyncClient(timeout=15) as client:
-                res = await client.get(
-                    f"{LXNS_BASE}/maimai/player/{friend_code}/bests",
-                    params={"song_id": int(music_id)},
-                    headers=self.headers
-                )
-            if res.status_code != 200:
-                return None
-            scores = res.json()
-            if isinstance(scores, dict):
-                scores = scores.get("data", scores)
-            if not isinstance(scores, list):
-                return None
-
+            # 查询单曲所有谱面成绩（需分别指定 song_type）
             result = []
-            for s in scores:
-                result.append(ChartInfo(
-                    song_id=s.get("id", 0),
-                    title=s.get("song_name", ""),
-                    level_index=s.get("level_index", 0),
-                    level=s.get("level", ""),
-                    achievements=s.get("achievements", 0),
-                    dxScore=s.get("dx_score", 0),
-                    rate=s.get("rate", ""),
-                    fc=s.get("fc") or "",
-                    fs=s.get("fs") or "",
-                    type=s.get("type", "standard"),
-                    level_label="",
-                    ds=0,
-                    ra=int(s.get("dx_rating", 0))
-                ))
+            for song_type in ("standard", "dx", "utage"):
+                async with httpx.AsyncClient(timeout=15) as client:
+                    res = await client.get(
+                        f"{LXNS_BASE}/maimai/player/{friend_code}/bests",
+                        params={"song_id": int(music_id), "song_type": song_type},
+                        headers=self.headers
+                    )
+                if res.status_code != 200:
+                    continue
+                scores = res.json()
+                if isinstance(scores, dict):
+                    scores = scores.get("data", scores)
+                if not isinstance(scores, list):
+                    continue
+                for s in scores:
+                    result.append(ChartInfo(
+                        song_id=s.get("id", 0),
+                        title=s.get("song_name", ""),
+                        level_index=s.get("level_index", 0),
+                        level=s.get("level", ""),
+                        achievements=s.get("achievements", 0),
+                        dxScore=s.get("dx_score", 0),
+                        rate=s.get("rate", ""),
+                        fc=s.get("fc") or "",
+                        fs=s.get("fs") or "",
+                        type=s.get("type", "standard"),
+                        level_label="",
+                        ds=0,
+                        ra=int(s.get("dx_rating", 0))
+                    ))
             return result
         except Exception as e:
             log.warning(f"落雪单曲成绩查询失败(qqid={qqid}, music_id={music_id}): {e}")

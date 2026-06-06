@@ -900,12 +900,8 @@ async def player_score_data(qqid: int, music: Music) -> Union[MessageSegment, st
                     if dev_records:
                         records.extend(dev_records)
                         return True
-                version = list(set(_v for _v in list(plate_to_dx_version.values())))
-                plate_records = await maiApi.query_user_plate(qqid=qqid, version=version)
-                for r in plate_records:
-                    if str(r.song_id) == music.id:
-                        records.append(r)
-                return bool(records)
+                # /query/plate 已要求 Developer-Token，无 token 跳过
+                return False
             except Exception:
                 return False
 
