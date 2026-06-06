@@ -185,6 +185,10 @@ async def _(bot: Bot, event: MessageEvent):
         timestamps = [time.strftime("%m-%d", time.localtime(c["time"])) for c in curves]
         ratings = [c["rating"] for c in curves]
         
+        import math
+        y_min = math.floor(min(ratings))
+        y_max = math.ceil(max(ratings))
+        
         line = Line(init_opts=opts.InitOpts(width="1000px", height="600px", bg_color="#fff"))
         line.add_xaxis(xaxis_data=timestamps)
         line.add_yaxis(
@@ -193,12 +197,21 @@ async def _(bot: Bot, event: MessageEvent):
             is_smooth=True,
             label_opts=opts.LabelOpts(is_show=True),
         )
-        line.set_global_opts(title_opts=opts.TitleOpts(title="📈 MaimaiDX 个人历史 Rating 演变折线图", pos_left="center"))
+        line.set_global_opts(
+            title_opts=opts.TitleOpts(title="📈 MaimaiDX 个人历史 Rating 演变折线图", pos_left="center"),
+            yaxis_opts=opts.AxisOpts(min_=y_min, max_=y_max),
+        )
         line.render(str(pie_html_file))
         
         base64_img = await run_chrome_to_base64()
         await render_curve.finish(MessageSegment.image(base64_img), reply_message=True)
-    except:
+    except Exception as e:
+        from nonebot.exception import FinishedException
+        if isinstance(e, FinishedException):
+            raise
+        import traceback
+        from loguru import logger as log
+        log.error(f"mai曲线 渲染失败: {e}\n{traceback.format_exc()}")
         await render_curve.finish("⚠️ 历史战绩画布高级组件渲染失败，请联系Bot管理员检修服务器配置环境。", reply_message=True)
 
 

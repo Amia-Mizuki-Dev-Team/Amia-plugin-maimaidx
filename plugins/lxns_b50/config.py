@@ -76,7 +76,7 @@ elif maiconfig.lxnspath:
 else:
     log.warning("未在 .env 中设置 LXNS_B50_PATH，系统将默认挂载至 data/lxns_b50 目录。")
 
-static: Path = Path(determined_path)
+static: Path = Path(determined_path).resolve()
 
 # 核心游戏资源骨架总线（资源直接位于 static 目录下）
 maidir: Path = static / 'pic'
