@@ -35,7 +35,8 @@ async def run_chrome_to_base64() -> str:
         await page.goto('file://' + str(pie_html_file))
         await asyncio.sleep(2)
         
-        content: str = await page.evaluate(SNAPSHOT_JS)
+        snapshot_js = SNAPSHOT_JS.read_text(encoding='utf-8')
+        content: str = await page.evaluate(snapshot_js)
         await browers.close()
         
     content_array = content.split(',')
