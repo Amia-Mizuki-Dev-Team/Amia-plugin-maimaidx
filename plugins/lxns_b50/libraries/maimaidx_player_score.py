@@ -905,7 +905,7 @@ async def player_score_data(qqid: int, music: Music) -> Union[MessageSegment, st
                     if str(r.song_id) == music.id:
                         records.append(r)
                 return bool(records)
-            except (UserNotFoundError, UserDisabledQueryError):
+            except Exception:
                 return False
 
         if source == 'lxns':
