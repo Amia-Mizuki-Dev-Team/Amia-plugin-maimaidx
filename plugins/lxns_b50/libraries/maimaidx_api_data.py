@@ -107,7 +107,18 @@ class MaiApi:
                 if isinstance(data, list):
                     return data
                 if isinstance(data, dict):
-                    return data.get("data", data.get("trend", []))
+                    raw_list = data.get("data", data.get("trend", []))
+                    # 转换为渲染器期望的格式
+                    import time as _time
+                    converted = []
+                    for item in raw_list if isinstance(raw_list, list) else []:
+                        date_str = item.get("date", "")
+                        ts = int(_time.mktime(_time.strptime(date_str, "%Y-%m-%d"))) if date_str else 0
+                        converted.append({
+                            "rating": item.get("total", 0),
+                            "time": ts,
+                        })
+                    return converted
             return []
         except Exception as e:
             log.error(f"拉取落雪 Rating 变动历史记录失败: {e}")
