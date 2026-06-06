@@ -113,7 +113,7 @@ class MaiApi:
             log.error(f"拉取落雪 Rating 变动历史记录失败: {e}")
             return []
 
-    async def query_user_song_score(self, qqid: int, music_id: str) -> Optional[List[ChartInfo]]:
+    async def query_user_song_score(self, qqid: int, music_id: str) -> "Optional[List[ChartInfo]]":
         """
         使用落雪 API 查询玩家单曲成绩（所有难度）。
 
