@@ -6,11 +6,11 @@ from nonebot.params import CommandArg, Depends
 from nonebot.exception import FinishedException
 from loguru import logger as log
 
-from ..libraries.maimaidx_api_data import maiApi, LXNS_BASE
+from ..libraries.maimaidx_api_data import maiApi, LXNS_BASE, is_official_bot
 from ..libraries.maimaidx_pass import DrawPass
 from ..libraries.image import image_to_base64
 from ..libraries.maimaidx_error import UserNotBindLXNSError, UserNotBindFishError
-from ..config import maiconfig, is_official_bot
+from ..config import maiconfig
 
 dxpass = on_command('dxpass', aliases={'dx名片', 'dx信息'})
 

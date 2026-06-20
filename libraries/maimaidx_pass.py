@@ -18,6 +18,18 @@ FRAME_DIR = CARD_DIR / 'CardFrame'
 # LXNS 资产 CDN
 LXNS_ASSET_BASE = "https://assets2.lxns.net/maimai/card"
 
+# 角色别名映射
+CHARA_ALIAS_MAP = {
+    "mzk": "050803",
+    "mizuki": "050803",
+    "晓山瑞希": "050803",
+    "秋山瑞希": "050803",
+    "瑞希": "050803",
+    "kanade": "050804",
+    "奏": "050804",
+    "宵崎奏": "050804",
+}
+
 
 def _ensure_asset(asset_type: str, filename_no_ext: str) -> Optional[Path]:
     """
@@ -114,8 +126,18 @@ class DrawPass:
         self.qqid = qqid
         self.friend_code = str(friend_code) if friend_code else None
 
-        # 角色 ID → 6 位补零
-        self.chara_id = str(chara_id).zfill(6) if chara_id else "000101"
+        # 角色 ID 映射与补零
+        if chara_id is not None:
+            chara_str = str(chara_id).strip().lower()
+            if chara_str in CHARA_ALIAS_MAP:
+                self.chara_id = CHARA_ALIAS_MAP[chara_str]
+            else:
+                try:
+                    self.chara_id = f"{int(chara_str):06d}"
+                except (ValueError, TypeError):
+                    self.chara_id = chara_str.zfill(6)
+        else:
+            self.chara_id = "000101"
 
         # 卡框 ID → 7 位补零
         if frame_id is not None:
@@ -363,15 +385,23 @@ class DrawPass:
         except Exception as e:
             log.warning(f"绘制昵称文本失败: {e}")
 
-        # B. 好友码（居中显示）
+        # B. 好友码（居中显示在卡背景区域内）
         if self.friend_code:
             try:
-                fc_font = ImageFont.truetype(font_tb, 18)
-                fc_str = str(self.friend_code)
-                bbox = draw.textbbox((0, 0), fc_str, font=fc_font)
-                tw = bbox[2] - bbox[0]
-                x_pos = 531 + (728 - 531 - tw) // 2
-                draw.text((x_pos, 153), fc_str, font=fc_font, fill=(0, 0, 0, 255))
+                fc_font_size = 18
+                max_fc_w = 250
+                while fc_font_size >= 11:
+                    fc_font = ImageFont.truetype(font_tb, fc_font_size)
+                    fc_str = str(self.friend_code)
+                    bbox = draw.textbbox((0, 0), fc_str, font=fc_font)
+                    tw = bbox[2] - bbox[0]
+                    th = bbox[3] - bbox[1]
+                    if tw <= max_fc_w:
+                        break
+                    fc_font_size -= 1
+                x_pos = 460 + (268 - tw) // 2
+                y_pos = 149 + (28 - th) // 2
+                draw.text((x_pos, y_pos), fc_str, font=fc_font, fill=(0, 0, 0, 255))
             except Exception as e:
                 log.warning(f"绘制好友码文本失败: {e}")
 
@@ -387,7 +417,7 @@ class DrawPass:
         except Exception as e:
             log.warning(f"绘制横幅文本失败: {e}")
 
-        # D. 底部卡号：好友码补零到 20 位 + [MizukiBot] YYYY.M.D
+        # D. 底部卡号：好友码补零到 20 位 + [MizukiBot] YYYY.M.D（水居中显示，防止超出边缘）
         fc_digits = str(self.friend_code).replace(" ", "") if self.friend_code else ""
         if not fc_digits:
             # 如果没有好友码，用 QQ 生成虚拟卡号
@@ -400,8 +430,20 @@ class DrawPass:
         bot_name = getattr(maiconfig, 'botName', 'MizukiBot')
         formatted_footer = f"{formatted_aime}    [{bot_name}] {date_stamp}"
         try:
-            aime_font = ImageFont.truetype(font_tb, 17)
-            draw.text((130, 1003), formatted_footer, font=aime_font, fill=(255, 255, 255, 255))
+            aime_font_size = 17
+            max_footer_w = 440
+            while aime_font_size >= 11:
+                aime_font = ImageFont.truetype(font_tb, aime_font_size)
+                bbox = draw.textbbox((0, 0), formatted_footer, font=aime_font)
+                tw = bbox[2] - bbox[0]
+                th = bbox[3] - bbox[1]
+                if tw <= max_footer_w:
+                    break
+                aime_font_size -= 1
+            # Capsule bounding box: X=[145, 622] (width=477, center=383), Y=[999, 1024] (height=25, center=1011.5)
+            x_pos = 145 + (477 - tw) // 2
+            y_pos = 999 + (25 - th) // 2
+            draw.text((x_pos, y_pos), formatted_footer, font=aime_font, fill=(255, 255, 255, 255))
         except Exception as e:
             log.warning(f"绘制卡号版本号失败: {e}")
 
