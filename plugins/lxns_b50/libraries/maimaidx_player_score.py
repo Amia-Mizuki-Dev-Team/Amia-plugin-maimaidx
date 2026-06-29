@@ -45,16 +45,39 @@ Condition = Callable[[PlayInfoDefault], bool]
 
 
 async def music_global_data(music: Music, level_index: int) -> MessageSegment:
-    """
-    绘制曲目游玩详情
-    
-    Params:
-        `music`: :class:Music
-        `level_index`: 难度
-    Returns:
-        `MessageSegment`
-    """
-    stats = music.stats[level_index]
+    stats = music.get('stats')
+    if not stats:
+        if chart_file.exists():
+            try:
+                import json
+                with open(chart_file, 'r', encoding='utf-8') as f:
+                    all_stats = json.load(f).get("charts", {})
+                sid = str(music.id)
+                song_stats = all_stats.get(sid)
+                if not song_stats and music.type.lower() == 'dx' and int(sid) < 10000:
+                    song_stats = all_stats.get(str(int(sid) + 10000))
+                
+                if song_stats:
+                    aligned_stats = [None] * len(music.ds)
+                    for idx, ds in enumerate(music.ds):
+                        best_stat = None
+                        best_diff = 999.0
+                        for s in song_stats:
+                            fit_val = s.get('fit_diff')
+                            if fit_val is not None:
+                                diff_val = abs(fit_val - ds)
+                                if diff_val < best_diff:
+                                    best_diff = diff_val
+                                    best_stat = s
+                        if best_diff < 0.2:
+                            aligned_stats[idx] = Music(best_stat)
+                    music.stats = aligned_stats
+                    if level_index < len(aligned_stats):
+                        stats = aligned_stats[level_index]
+            except Exception as e:
+                log.error(f"Failed to load chart stats: {e}")
+    if not stats:
+        raise ValueError("该谱面暂无全服统计数据")
     fc_data_pair = [list(z) for z in zip([c.upper() if c else 'Not FC' for c in [''] + comboRank], stats.fc_dist)]
     acc_data_pair = [list(z) for z in zip([s.upper() for s in scoreRank], stats.dist)]
 

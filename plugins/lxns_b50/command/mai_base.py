@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import json
 import time
 from nonebot import on_command
@@ -5,14 +6,58 @@ from nonebot.adapters.onebot.v11 import Bot, Message, MessageEvent, MessageSegme
 from nonebot.params import CommandArg
 from ..libraries.maimaidx_api_data import maiApi, user_source_route, maiconfig, is_official_bot, build_markdown_keyboard
 from ..libraries.tool import run_chrome_to_base64
+from maimai_sync.lib_msg import _build_markdown_segment
+from src.plugins.qbind import get_real_qq
 
 # 指令注册总览
-maimaidxhelp = on_command('mai帮助', aliases={'帮助maimaiDX', '帮助maimaidx'})
+maimaidxhelp = on_command('mai帮助', aliases={'帮助maimaiDX', '帮助maimaidx'}, priority=5, block=True)
 switch_source = on_command('切换数据源')
 user_profile = on_command('mai状态', aliases={'详细信息', 'mai个人中心'})
 render_curve = on_command('mai曲线')
 render_recent = on_command('mai最近', aliases={'mai最近成绩', 'mai recent'})
 render_heatmap = on_command('mai热度', aliases={'mai热力图', 'mai heatmap'})
+lxbind = on_command('lxbind', aliases={'绑定落雪', '绑定lx'})
+
+
+@lxbind.handle()
+async def _(bot: Bot, event: MessageEvent, message: Message = CommandArg()):
+    raw_qq = event.user_id
+    real_qq_str = get_real_qq(str(raw_qq))
+    qqid = int(real_qq_str) if (real_qq_str and real_qq_str.isdigit()) else raw_qq
+    
+    auth_url = (
+        "https://maimai.lxns.net/oauth/authorize"
+        "?response_type=code"
+        "&client_id=c9dc866a-1d49-4159-beb0-b711f19055ac"
+        "&redirect_uri=https%3A%2F%2Fapi.mizuki.top%2Fauth%2Fcallback"
+        "&scope=read_user_profile+read_player+write_player+read_user_token"
+    )
+    
+    md_content = (
+        "### ❄️ 落雪查分器 OAuth 授权绑定\n\n"
+        f"针对您的 QQ 账号：`{qqid}`\n"
+        "请点击下方按钮前往落雪查分器进行安全授权，绑定您的成绩数据以同步至 Bot。\n\n"
+        "**💡 授权后操作**：\n"
+        "授权成功后，落雪官网会生成该格式的「授权码」：`XXXX-XXXX-XXXX`。\n"
+        "请复制该授权码直接在此处发送给 Bot 完成最后的接入校验。"
+    )
+    
+    plain_content = (
+        "【落雪查分器 OAuth 绑定引导】\n\n"
+        f"请复制以下链接前往浏览器打开并授权：\n"
+        f"{auth_url}\n\n"
+        "授权成功后将您获得的授权码直接发送给 Bot 即可完成绑定！"
+    )
+    
+    if is_official_bot(bot.self_id):
+        msg_segment = _build_markdown_segment(md_content, [
+            [
+                {"id": "go_auth", "render_data.label": "🌐 前往落雪授权", "render_data.style": 1, "action.type": 0, "action.permission.type": 2, "action.data": auth_url}
+            ]
+        ])
+        await lxbind.finish(Message(msg_segment))
+    else:
+        await lxbind.finish(plain_content, reply_message=True)
 
 
 @switch_source.handle()
@@ -21,7 +66,9 @@ async def _(event: MessageEvent, message: Message = CommandArg()):
     动态修改玩家在内存字典中指定的默认输出查分数据源
     """
     arg = message.extract_plain_text().strip().lower()
-    qqid = event.user_id
+    raw_qq = event.user_id
+    real_qq_str = get_real_qq(str(raw_qq))
+    qqid = int(real_qq_str) if (real_qq_str and real_qq_str.isdigit()) else raw_qq
     if arg in ['落雪', 'lxns']:
         user_source_route[qqid] = 'lxns'
         await switch_source.finish("已成功为您指定查分默认输出为：❄️ 落雪 (LXNS)", reply_message=True)
@@ -34,65 +81,70 @@ async def _(event: MessageEvent, message: Message = CommandArg()):
 
 @maimaidxhelp.handle()
 async def _(bot: Bot, event: MessageEvent):
-    """
-    【核心帮助菜单】
-    针对官方机器人(3889004352)下发含有动态源切换按钮和Markdown超链接的菜单；
-    针对常规Bot或picmenu-next捕获链，则干净输出纯文本，方便多功能菜单整合。
-    """
-    qqid = event.user_id
+    raw_qq = event.user_id
+    real_qq_str = get_real_qq(str(raw_qq))
+    qqid = int(real_qq_str) if (real_qq_str and real_qq_str.isdigit()) else raw_qq
     current_source = user_source_route.get(qqid, maiconfig.prober_source.lower())
-    source_title = "❄️ 落雪 (LXNS)" if current_source == 'lxns' else "🔮 水鱼 (Diving-Fish)"
+    source_title = "落雪 (LXNS)" if current_source == 'lxns' else "水鱼 (Diving-Fish)"
 
-    # 1. 针对官方开放平台设计的结构化高亮 Markdown 文本
     md_help = (
-        f"### 🎵 MaimaiDX 查分官方助手\n"
-        f"> 当前为您生效的默认输出端：**{source_title}**\n\n"
-        "**📊 成绩核心查分**\n"
-        "• `b50` : 生成 Best 50 个人综合成绩面板\n"
-        "• `ap50` : 生成 AP 50 纯收曲全成就图\n"
-        "• `minfo <ID>` : 查询单曲游玩详情与分数线\n\n"
-        "**🔍 曲目高效检索**\n"
+        "### MaimaiDX 查分助手\n"
+        f"> 当前为您生效的默认输出端：{source_title}\n\n"
+        "**成绩核心查分**\n"
+        "• `b50` : 生成 Best 50 个人成绩图\n"
+        "• `ap50` : 生成 AP 50 成绩图 (落雪源)\n"
+        "• `minfo <ID>` : 查询单谱面游玩详情与分数线\n"
+        "• `ginfo <ID>` : 查询单谱面全服统计图\n"
+        "• `分数线 <ID> <达成率>` : 查询单谱面达成分数线\n"
+        "• `dxpass [立绘ID/名] [卡框ID] [底板ID]` : 生成金卡名片合成图\n\n"
+        "**曲目与检索**\n"
         "• `查歌 <关键词>` : 全局模糊检索歌曲名\n"
-        "• `id <曲目ID>` : 调取目标谱面核心底标参数\n\n"
-        "**⚙️ 账户与路由中心**\n"
+        "• `id <曲目ID>` : 调取目标谱面核心底标参数\n"
+        "• `完成表` / `定数表` : 完成进度与定数信息\n\n"
+        "**游戏与互动**\n"
+        "• `猜歌` / `猜曲绘` / `听歌猜歌` / `别名猜歌` : 开启群内猜曲游戏\n\n"
+        "**账户与路由中心**\n"
+        "• `lxbind` : 引导授权并绑定您的落雪账号\n"
         "• `mai状态` : 诊断您的双端绑定状态与档案大盘\n"
-        "• `切换数据源 水鱼/落雪` : 实时修改输出端\n\n"
-        "💡 *提示：点击下方对应快捷按钮，即可一键发送对应查分指令或就地切置默认输出！*"
+        "• `切换数据源 水鱼/落雪` : 实时修改输出端\n"
+        "• `mai曲线` / `mai最近` / `mai热度` : 绘制落雪数据趋势走势及记录"
     )
 
-    # 2. 针对普通私有部署以及 picmenu 图片菜单插件解析的纯文本标准格式
     plain_help = (
-        f"【MaimaiDX 查分器指令字典】\n"
+        "[MaimaiDX 查分器指令字典]\n"
         f"当前为您生效的数据源：{source_title}\n\n"
         "· b50 : 生成 Best 50 成绩图\n"
         "· ap50 : 生成 AP 50 成绩图\n"
+        "· minfo <曲目ID> : 查询单曲游玩详情\n"
+        "· ginfo <曲目ID> : 查询单曲全服统计图\n"
+        "· 分数线 <曲目ID> <达成率> : 查询单曲分数线\n"
+        "· dxpass [立绘ID/名] [卡框ID] [底板ID] : 生成名片大图\n"
+        "· 查歌 <关键词> : 检索歌曲\n"
+        "· id <曲目ID> : 查看谱面详细底标\n"
+        "· 完成表 / 定数表 : 查看完成表与定数表\n"
+        "· 猜歌 / 猜曲绘 / 听歌猜歌 / 别名猜歌 : 开启小游戏\n"
+        "· lxbind : 绑定落雪账号\n"
         "· mai状态 : 诊断查分器双端绑定状态\n"
         "· 切换数据源 <水鱼/落雪> : 修改输出端\n"
-        "· minfo <曲目ID> : 查询单曲游玩详情\n"
-        "· id <曲目ID> : 查看谱面详细底标"
+        "· mai曲线 / mai最近 / mai热度 : 查询落雪趋势/最近记录/热力图"
     )
 
-    # 交互式内嵌键盘按钮组 (2行2列)
-    inline_keyboard = {
-        "rows": [
-            {
-                "buttons": [
-                    {"id": "b50", "render_data": {"label": "📊 生成我的 B50", "style": 1}, "action": {"type": 2, "permission": {"type": 0}, "data": "b50", "enter": True}},
-                    {"id": "profile", "render_data": {"label": "👤 个人状态大盘", "style": 1}, "action": {"type": 2, "permission": {"type": 0}, "data": "mai状态", "enter": True}}
-                ]
-            },
-            {
-                "buttons": [
-                    {"id": "to_lx", "render_data": {"label": "❄️ 默认切至落雪", "style": 2}, "action": {"type": 2, "permission": {"type": 0}, "data": "切换数据源 落雪", "enter": True}},
-                    {"id": "to_fi", "render_data": {"label": "🔮 默认切至水鱼", "style": 2}, "action": {"type": 2, "permission": {"type": 0}, "data": "切换数据源 水鱼", "enter": True}}
-                ]
-            }
-        ]
-    }
-
-    # 智能判别分流
     if is_official_bot(bot.self_id):
-        await bot.send(event=event, message=md_help, extra={"markdown": True, "keyboard": inline_keyboard})
+        msg_segment = _build_markdown_segment(md_help, [
+            [
+                {"id": "b50", "render_data.label": "生成我的 B50", "render_data.style": 1, "action.type": 2, "action.permission.type": 2, "action.data": "b50", "action.enter": True},
+                {"id": "profile", "render_data.label": "个人状态大盘", "render_data.style": 1, "action.type": 2, "action.permission.type": 2, "action.data": "mai状态", "action.enter": True}
+            ],
+            [
+                {"id": "bind", "render_data.label": "绑定落雪账号", "render_data.style": 1, "action.type": 2, "action.permission.type": 2, "action.data": "lxbind", "action.enter": True},
+                {"id": "dxpass", "render_data.label": "生成名片", "render_data.style": 1, "action.type": 2, "action.permission.type": 2, "action.data": "dxpass", "action.enter": True}
+            ],
+            [
+                {"id": "to_lx", "render_data.label": "默认切至落雪", "render_data.style": 2, "action.type": 2, "action.permission.type": 2, "action.data": "切换数据源 落雪", "action.enter": True},
+                {"id": "to_fi", "render_data.label": "默认切至水鱼", "render_data.style": 2, "action.type": 2, "action.permission.type": 2, "action.data": "切换数据源 水鱼", "action.enter": True}
+            ]
+        ])
+        await maimaidxhelp.finish(Message(msg_segment))
     else:
         await maimaidxhelp.finish(plain_help, reply_message=True)
 
@@ -103,7 +155,9 @@ async def _(bot: Bot, event: MessageEvent):
     【详细信息：个人中心大盘】
     同步探测玩家落雪和水鱼的绑定和注册细节，并送出官方跳转和一键切换机制
     """
-    qqid = event.user_id
+    raw_qq = event.user_id
+    real_qq_str = get_real_qq(str(raw_qq))
+    qqid = int(real_qq_str) if (real_qq_str and real_qq_str.isdigit()) else raw_qq
     bind = await maiApi.check_bind_status(qqid)
     lx_ind = "🟢 已同步绑定" if bind["lxns"] else "🔴 未绑定"
     fi_ind = "🟢 已同步绑定" if bind["diving_fish"] else "🔴 未绑定"
@@ -114,7 +168,7 @@ async def _(bot: Bot, event: MessageEvent):
     # 档案卡 Markdown 规范格式
     md_profile = (
         f"### 👤 MaimaiDX 玩家档案大盘\n"
-        f"针对您的 QQ 账户：`{qqid}` 诊断报告：\n\n"
+        f"针对您的 QQ 账号：`{qqid}` 诊断报告：\n\n"
         f"**⚙️ 当前默认输出端**\n"
         f"• 正在使用：**{source_title}**\n\n"
         f"**🔗 全端数据同步状态检测**\n"
@@ -133,31 +187,21 @@ async def _(bot: Bot, event: MessageEvent):
         f"• 提示：落雪源用户可发送「mai曲线」调取Rating历史走势。"
     )
 
-    # 进阶控制键盘（支持跳转与就地无感绑定切换）
-    inline_keyboard = {
-        "rows": [
-            {
-                "buttons": [
-                    {"id": "set_lxns", "render_data": {"label": "❄️ 默认设为落雪", "style": 2}, "action": {"type": 2, "permission": {"type": 0}, "data": "切换数据源 落雪", "enter": True}},
-                    {"id": "set_fish", "render_data": {"label": "🔮 默认设为水鱼", "style": 2}, "action": {"type": 2, "permission": {"type": 0}, "data": "切换数据源 水鱼", "enter": True}}
-                ]
-            },
-            {
-                "buttons": [
-                    {"id": "v_curve", "render_data": {"label": "📈 趋势折线走势图", "style": 1}, "action": {"type": 2, "permission": {"type": 0}, "data": "mai曲线", "enter": True}}
-                ]
-            },
-            {
-                "buttons": [
-                    {"id": "lnk_lx", "render_data": {"label": "🌐 落雪主页传送", "style": 0}, "action": {"type": 0, "permission": {"type": 0}, "data": "https://maimai.lxns.net/user/profile?tab=profile"}},
-                    {"id": "lnk_fi", "render_data": {"label": "🌐 水鱼主页传送", "style": 0}, "action": {"type": 0, "permission": {"type": 0}, "data": "https://www.diving-fish.com/maimaidx/prober/"}}
-                ]
-            }
-        ]
-    }
-
     if is_official_bot(bot.self_id):
-        await bot.send(event=event, message=md_profile, extra={"markdown": True, "keyboard": inline_keyboard})
+        msg_segment = _build_markdown_segment(md_profile, [
+            [
+                {"id": "set_lxns", "render_data.label": "❄️ 默认设为落雪", "render_data.style": 2, "action.type": 2, "action.permission.type": 2, "action.data": "切换数据源 落雪", "action.enter": True},
+                {"id": "set_fish", "render_data.label": "🔮 默认设为水鱼", "render_data.style": 2, "action.type": 2, "action.permission.type": 2, "action.data": "切换数据源 水鱼", "action.enter": True}
+            ],
+            [
+                {"id": "v_curve", "render_data.label": "📈 趋势折线走势图", "render_data.style": 1, "action.type": 2, "action.permission.type": 2, "action.data": "mai曲线", "action.enter": True}
+            ],
+            [
+                {"id": "lnk_lx", "render_data.label": "🌐 落雪主页传送", "render_data.style": 0, "action.type": 0, "action.permission.type": 2, "action.data": "https://maimai.lxns.net/user/profile?tab=profile"},
+                {"id": "lnk_fi", "render_data.label": "🌐 水鱼主页传送", "render_data.style": 0, "action.type": 0, "action.permission.type": 2, "action.data": "https://www.diving-fish.com/maimaidx/prober/"}
+            ]
+        ])
+        await user_profile.finish(Message(msg_segment))
     else:
         await user_profile.finish(plain_profile, reply_message=True)
 
@@ -168,7 +212,9 @@ async def _(bot: Bot, event: MessageEvent):
     【向外拓展：Rating 历史变动趋势折线图】
     仅在用户将当前输出源切换为落雪时提供支持
     """
-    qqid = event.user_id
+    raw_qq = event.user_id
+    real_qq_str = get_real_qq(str(raw_qq))
+    qqid = int(real_qq_str) if (real_qq_str and real_qq_str.isdigit()) else raw_qq
     current_source = user_source_route.get(qqid, maiconfig.prober_source.lower())
     if current_source != 'lxns':
         await render_curve.finish("⚠️ 趋势历史曲线功能目前由落雪API独占特供，请先切换默认输出端为落雪查分器！", reply_message=True)
@@ -230,7 +276,9 @@ async def _(bot: Bot, event: MessageEvent):
     【落雪特供】最近 50 条游玩记录
     使用落雪 API: GET /maimai/player/qq/{qq}/recents
     """
-    qqid = event.user_id
+    raw_qq = event.user_id
+    real_qq_str = get_real_qq(str(raw_qq))
+    qqid = int(real_qq_str) if (real_qq_str and real_qq_str.isdigit()) else raw_qq
     current_source = user_source_route.get(qqid, maiconfig.prober_source.lower())
     if current_source != 'lxns':
         await render_recent.finish("⚠️ 最近游玩记录功能目前由落雪 API 独占特供，请先切换默认输出端为落雪查分器！", reply_message=True)
@@ -288,15 +336,17 @@ async def _(bot: Bot, event: MessageEvent):
         import traceback
         log.error(f"[mai最近] 查询失败:\n{traceback.format_exc()}")
         await render_recent.finish(f"⚠️ 查询最近记录失败: {type(e).__name__}", reply_message=True)
-
-
+ 
+ 
 @render_heatmap.handle()
 async def _(bot: Bot, event: MessageEvent):
     """
     【落雪特供】成绩上传热力图
     使用落雪 API: GET /maimai/player/{friend_code}/heatmap
     """
-    qqid = event.user_id
+    raw_qq = event.user_id
+    real_qq_str = get_real_qq(str(raw_qq))
+    qqid = int(real_qq_str) if (real_qq_str and real_qq_str.isdigit()) else raw_qq
     current_source = user_source_route.get(qqid, maiconfig.prober_source.lower())
     if current_source != 'lxns':
         await render_heatmap.finish("⚠️ 热力图功能目前由落雪 API 独占特供，请先切换默认输出端为落雪查分器！", reply_message=True)
