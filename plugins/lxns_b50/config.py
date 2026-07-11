@@ -18,7 +18,6 @@ class Config(BaseModel):
     # 落雪数据源路径与 Token
     lxnspath: Optional[str] = Field(default=None, validation_alias=AliasChoices("lxnspath", "LXNSPATH", "lxns_path", "LXNS_PATH"))
     lxnstoken: str = Field(default="gAtzZcA6iXdihYhBtbw8VeXUtnFsMUI-Iwdyd-_ZvKM=", validation_alias=AliasChoices("lxnstoken", "LXNSTOKEN", "lxns_token", "LXNS_TOKEN"))
-    
     # 水鱼数据源 Token
     maimaidxtoken: Optional[str] = Field(default="", validation_alias=AliasChoices("maimaidxtoken", "MAIMAIDXTOKEN", "maimai_dx_token", "MAIMAIDX_TOKEN"))
     
