@@ -26,6 +26,10 @@ search_alias_song   = on_endswith(('是什么歌', '是啥歌'))
 query_chart         = on_regex(r'^id\s?([0-9]+)$', re.IGNORECASE)
 
 
+async def _song_guess_message(music, user_id: int) -> Message:
+    return Message("您要找的是不是：") + await draw_music_info(music, user_id)
+
+
 def song_level(ds1: float, ds2: float) -> List[Tuple[str, str, float, str]]:
     """
     查询定数范围内的乐曲
@@ -294,33 +298,27 @@ async def _(event: MessageEvent, end: str = Endswith()):
         else:
             music = mai.total_list.by_id(str(alias_data[0].SongID))
             if music:
-                msg = '您要找的是不是：' + await draw_music_info(music, event.user_id)
+                msg = await _song_guess_message(music, event.user_id)
             else:
                 msg = error_msg
             await search_alias_song.finish(msg, reply_message=True)
     
     # id
     if name.isdigit() and (music := mai.total_list.by_id(name)):
-        await search_alias_song.finish(
-            '您要找的是不是：' + await draw_music_info(music, event.user_id), 
-            reply_message=True
-        )
+        await search_alias_song.finish(await _song_guess_message(music, event.user_id), reply_message=True)
     if search_id := re.search(r'^id([0-9]*)$', name, re.IGNORECASE):
         music = mai.total_list.by_id(search_id.group(1))
-        await search_alias_song.finish(
-            '您要找的是不是：' + await draw_music_info(music, event.user_id), 
-            reply_message=True
-        )
+        if music:
+            await search_alias_song.finish(await _song_guess_message(music, event.user_id), reply_message=True)
     
     # 标题
     result = mai.total_list.filter(title_search=name)
     if len(result) == 0:
         await search_alias_song.finish(error_msg, reply_message=True)
     elif len(result) == 1:
-        msg = await draw_music_info(result.random(), event.user_id)
         await search_alias_song.finish(
-            '您要找的是不是：' + await draw_music_info(result.random(), event.user_id), 
-            reply_message=True
+            await _song_guess_message(result.random(), event.user_id),
+            reply_message=True,
         )
     elif len(result) < 50:
         msg = f'未找到别名为「{name}」的歌曲，但找到「{len(result)}」个相似标题的曲目：\n'
