@@ -1,5 +1,6 @@
 import asyncio
 import json
+import random
 import httpx
 import aiofiles
 from typing import Dict, Any, List, Optional
@@ -32,6 +33,74 @@ class MusicList(list):
             if music.title == title:
                 return music
         return None
+
+    def by_id_list(self, music_ids: List[str]) -> "MusicList":
+        ids = {str(music_id) for music_id in music_ids}
+        return MusicList(music for music in self if str(music.id) in ids)
+
+    def by_plan(self, level: str) -> "MusicList":
+        return self.filter(level=level)
+
+    def random(self) -> Optional[Music]:
+        return random.choice(self) if self else None
+
+    def filter(
+        self,
+        *,
+        title_search: Optional[str] = None,
+        level: Optional[str] = None,
+        ds: Optional[float | tuple[float, float]] = None,
+        bpm: Optional[int | tuple[int, int]] = None,
+        artist_search: Optional[str] = None,
+        charter_search: Optional[str] = None,
+        genre: Optional[str] = None,
+        version: Optional[str | List[str]] = None,
+        type: Optional[str] = None,
+    ) -> "MusicList":
+        """Compatibility filter for the commands inherited from maimaidx."""
+
+        def in_range(value: float, condition: float | tuple[float, float]) -> bool:
+            low, high = condition if isinstance(condition, tuple) else (condition, condition)
+            return low <= value <= high
+
+        result = MusicList()
+        for music in self:
+            basic_info = music.get("basic_info", {}) or {}
+            title = str(music.get("title", ""))
+            if title_search and title_search.casefold() not in title.casefold():
+                continue
+            if level is not None and str(level) not in {str(item) for item in music.get("level", [])}:
+                continue
+            if ds is not None:
+                values = music.get("ds", []) or []
+                if not any(in_range(float(value), ds) for value in values):
+                    continue
+            if bpm is not None:
+                value = basic_info.get("bpm", music.get("bpm"))
+                try:
+                    if value is None or not in_range(float(value), bpm):
+                        continue
+                except (TypeError, ValueError):
+                    continue
+            if artist_search:
+                artist = str(basic_info.get("artist", music.get("artist", "")))
+                if artist_search.casefold() not in artist.casefold():
+                    continue
+            if charter_search:
+                charters = [str(chart.get("charter", "")) for chart in music.get("charts", []) or []]
+                if not any(charter_search.casefold() in charter.casefold() for charter in charters):
+                    continue
+            if genre and str(basic_info.get("genre", music.get("genre", ""))) != str(genre):
+                continue
+            if version is not None:
+                versions = version if isinstance(version, list) else [version]
+                music_version = str(basic_info.get("from", music.get("version", "")))
+                if music_version not in {str(item) for item in versions}:
+                    continue
+            if type and str(music.get("type", "")).upper() != str(type).upper():
+                continue
+            result.append(music)
+        return result
 
 
 class MaiMusic:
