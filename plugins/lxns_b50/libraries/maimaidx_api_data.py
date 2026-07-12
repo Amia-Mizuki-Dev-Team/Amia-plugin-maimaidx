@@ -32,7 +32,7 @@ class MaiApi:
         """从 maimai_sync 数据库查询用户绑定状态（不自行创建，单纯使用其远程库与本地库）"""
         status = {}
         try:
-            from maimai_sync.lib_db import get_user_bind_async
+            from ..dependencies import get_user_bind_async
             binds = await get_user_bind_async(str(qqid))
             if binds:
                 status["db_fish"] = bool(binds.get("fish"))

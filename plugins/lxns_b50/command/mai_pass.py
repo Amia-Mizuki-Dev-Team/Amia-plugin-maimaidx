@@ -12,11 +12,10 @@ from ..config import maiconfig
 from ..libraries.maimaidx_api_data import maiApi, LXNS_BASE, is_official_bot
 from ..libraries.image import image_to_base64
 from ..libraries.maimaidx_pass import DrawPass, get_chara_id_by_name
-from maimai_sync.lib_msg import _build_markdown_segment
+from ..dependencies import build_markdown_segment as _build_markdown_segment, get_real_qq
 
 import io
 import base64
-from src.plugins.qbind import get_real_qq
 
 dxpass = on_command('dxpass', aliases={'dxpass', 'pass', '名片', '金卡'})
 

@@ -16,7 +16,8 @@ from ..libraries.maimaidx_best_50 import generate
 from ..libraries.maimaidx_error import UserNotBindLXNSError, UserNotBindFishError
 from ..libraries.maimaidx_music import mai
 from ..libraries.maimaidx_api_data import is_official_bot
-from maimai_sync.lib_msg import _build_markdown_segment
+from ..dependencies import build_markdown_segment as _build_markdown_segment
+from ..dependencies import get_real_qq
 
 try:
     from ..libraries.maimaidx_player_score import music_global_data, player_score_data, score_line_data
@@ -74,8 +75,6 @@ def _search_music(name: str) -> Optional[Any]:
         if m.title.lower() == name_lower:
             return m
     return None
-
-from src.plugins.qbind import get_real_qq
 
 @best50.handle()
 async def _(bot: Bot, event: MessageEvent, message: Message = CommandArg(), user_id: Optional[int] = Depends(get_at_qq)):

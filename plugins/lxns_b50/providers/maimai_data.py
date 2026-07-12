@@ -6,6 +6,7 @@ core = require("amia_core")
 
 from ..libraries.maimaidx_api_data import maiApi
 from ..libraries.maimaidx_music import mai
+from ..config import maiconfig
 
 
 def normalize_lxns_song_id(raw: object) -> int:
@@ -19,14 +20,20 @@ def normalize_lxns_song_id(raw: object) -> int:
     return value
 
 
-def _qq(identity) -> int | None:
-    raw = identity.canonical_user_id or identity.external_key.user_id
-    return int(raw) if isinstance(raw, str) and raw.isdecimal() else None
+def resolve_qq_id(identity) -> int | None:
+    canonical = identity.canonical_user_id
+    if canonical is not None:
+        value = str(canonical)
+        return int(value) if value.isdecimal() else None
+    if str(identity.external_key.self_id) in {str(item) for item in maiconfig.official_bot_ids}:
+        return None
+    raw_user_id = str(identity.external_key.user_id)
+    return int(raw_user_id) if raw_user_id.isdecimal() else None
 
 
 class MaimaidxDataProvider:
     async def get_player_summary(self, identity):
-        qq = _qq(identity)
+        qq = resolve_qq_id(identity)
         if qq is None:
             return None
         player = await maiApi.query_user_b50(qqid=qq)
@@ -41,7 +48,7 @@ class MaimaidxDataProvider:
         )
 
     async def get_player_records(self, identity, query=None):
-        qq = _qq(identity)
+        qq = resolve_qq_id(identity)
         if qq is None:
             return []
         player = await maiApi.query_user_b50(qqid=qq)
@@ -53,6 +60,10 @@ class MaimaidxDataProvider:
                 continue
             for record in charts:
                 song_id = normalize_lxns_song_id(record.song_id)
+                music = mai.total_list.by_id(str(song_id))
+                version = getattr(getattr(music, "basic_info", {}), "version", None) if music else None
+                if query and query.versions and version not in query.versions:
+                    continue
                 if query and query.difficulty_indexes and int(record.level_index) not in query.difficulty_indexes:
                     continue
                 constant = float(record.ds or 0)
@@ -86,6 +97,9 @@ class MaimaidxDataProvider:
         song = mai.total_list.by_id(str(chart.song_id))
         if song is None or chart.difficulty_index < 0 or chart.difficulty_index >= len(song.level):
             return None
+        song_type = str(getattr(song, "type", ""))
+        if chart.chart_type not in {"standard", "dx"} or (song_type and song_type != chart.chart_type):
+            return None
         return core.MaimaiChart(
             key=chart,
             title=str(song.title),
@@ -96,4 +110,11 @@ class MaimaidxDataProvider:
 
 
 def register_provider() -> None:
+    global _provider_registered
+    if _provider_registered:
+        return
     core.register_maimai_provider(core.MAIMAI_DATA_PROVIDER, MaimaidxDataProvider())
+    _provider_registered = True
+
+
+_provider_registered = False

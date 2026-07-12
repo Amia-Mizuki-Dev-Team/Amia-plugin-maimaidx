@@ -6,8 +6,7 @@ from nonebot.adapters.onebot.v11 import Bot, Message, MessageEvent, MessageSegme
 from nonebot.params import CommandArg
 from ..libraries.maimaidx_api_data import maiApi, user_source_route, maiconfig, is_official_bot, build_markdown_keyboard
 from ..libraries.tool import run_chrome_to_base64
-from maimai_sync.lib_msg import _build_markdown_segment
-from src.plugins.qbind import get_real_qq
+from ..dependencies import build_markdown_segment as _build_markdown_segment, get_real_qq
 
 # 指令注册总览
 maimaidxhelp = on_command('mai帮助', aliases={'帮助maimaiDX', '帮助maimaidx'}, priority=5, block=True)

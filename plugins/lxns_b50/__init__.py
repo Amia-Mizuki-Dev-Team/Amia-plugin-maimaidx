@@ -14,10 +14,7 @@ from nonebot.log import logger as log
 # ==========================================
 # 【maimai_sync 数据库整合 — 使用其远程库与本地库，不自行创建】
 # ==========================================
-maimai_sync = require("maimai_sync")
-initialize_databases = maimai_sync.initialize_databases
-get_user_bind_async = maimai_sync.get_user_bind_async
-save_user_bind = maimai_sync.save_user_bind
+from .dependencies import initialize_databases, get_user_bind_async, save_user_bind
 from .providers import register_provider
 
 # 注册并拉取定时计划任务组件
@@ -72,6 +69,7 @@ async def get_music():
     Bot 启动生命周期钩子：
     执行独立的 Token 代理加载，并通过双端串联聚合完成零阻塞数据同步
     """
+    register_provider()
     # ==========================================
     # 初始化 maimai_sync 数据库（远程 MySQL + 本地 SQLite）
     # ==========================================
@@ -131,7 +129,6 @@ async def get_music():
         mai.guess()
         
     log.success('Maimai DX 本地增量游戏资产自愈自平衡初始化成功！')
-    register_provider()
     
     # 【关键修复】宽泛捕获预加载逻辑，避免无底座导致开机断流
     if maiconfig.saveinmem:
