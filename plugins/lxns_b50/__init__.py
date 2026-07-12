@@ -17,6 +17,11 @@ from nonebot.log import logger as log
 from .dependencies import initialize_databases, get_user_bind_async, save_user_bind
 from .providers import register_provider
 
+# The provider is usable before network-backed song data is ready.  Register
+# it during plugin import so dependent plugins can resolve the contract after
+# require("lxns_b50") and receive safe empty results until startup completes.
+register_provider()
+
 # 注册并拉取定时计划任务组件
 scheduler = require('nonebot_plugin_apscheduler')
 from nonebot_plugin_apscheduler import scheduler
@@ -69,7 +74,6 @@ async def get_music():
     Bot 启动生命周期钩子：
     执行独立的 Token 代理加载，并通过双端串联聚合完成零阻塞数据同步
     """
-    register_provider()
     # ==========================================
     # 初始化 maimai_sync 数据库（远程 MySQL + 本地 SQLite）
     # ==========================================
