@@ -14,7 +14,11 @@ from nonebot.log import logger as log
 # ==========================================
 # 【maimai_sync 数据库整合 — 使用其远程库与本地库，不自行创建】
 # ==========================================
-from maimai_sync.lib_db import initialize_databases, get_user_bind_async, save_user_bind
+maimai_sync = require("maimai_sync")
+initialize_databases = maimai_sync.initialize_databases
+get_user_bind_async = maimai_sync.get_user_bind_async
+save_user_bind = maimai_sync.save_user_bind
+from .providers import register_provider
 
 # 注册并拉取定时计划任务组件
 scheduler = require('nonebot_plugin_apscheduler')
@@ -127,6 +131,7 @@ async def get_music():
         mai.guess()
         
     log.success('Maimai DX 本地增量游戏资产自愈自平衡初始化成功！')
+    register_provider()
     
     # 【关键修复】宽泛捕获预加载逻辑，避免无底座导致开机断流
     if maiconfig.saveinmem:
