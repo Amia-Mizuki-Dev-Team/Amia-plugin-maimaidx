@@ -180,7 +180,7 @@ class MaiApi:
                         fs=s.get("fs") or "",
                         type=s.get("type", "standard"),
                         level_label="",
-                        ds=0,
+                        ds=0, source="lxns",
                         ra=int(s.get("dx_rating", 0))
                     ))
             return result
@@ -238,7 +238,7 @@ class MaiApi:
                             achievements=c.get("achievements", 0), dxScore=c.get("dx_score", 0),
                             rate=c.get("rate", ""), fc=c.get("fc") or "", fs=c.get("fs") or "",
                             type=c.get("type", "standard"), level_label="",
-                            ds=0, ra=int(c.get("dx_rating", 0))
+                            ds=0, ra=int(c.get("dx_rating", 0)), source="lxns"
                         ))
                     for c in data.get("dx", []):
                         dx_list.append(ChartInfo(
@@ -247,7 +247,7 @@ class MaiApi:
                             achievements=c.get("achievements", 0), dxScore=c.get("dx_score", 0),
                             rate=c.get("rate", ""), fc=c.get("fc") or "", fs=c.get("fs") or "",
                             type=c.get("type", "dx"), level_label="",
-                            ds=0, ra=int(c.get("dx_rating", 0))
+                            ds=0, ra=int(c.get("dx_rating", 0)), source="lxns"
                         ))
                     return UserInfo(
                         nickname=profile.get("name", username or str(qqid)),
@@ -277,9 +277,9 @@ class MaiApi:
             sd_list = []
             dx_list = []
             for c in raw.get("charts", {}).get("sd", []):
-                sd_list.append(ChartInfo(**c))
+                sd_list.append(ChartInfo(**{**c, "source": "fish"}))
             for c in raw.get("charts", {}).get("dx", []):
-                dx_list.append(ChartInfo(**c))
+                dx_list.append(ChartInfo(**{**c, "source": "fish"}))
             return UserInfo(
                 nickname=raw.get("nickname", username or str(qqid)),
                 rating=raw.get("rating", 0),

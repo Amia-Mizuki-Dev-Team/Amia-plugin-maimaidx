@@ -161,6 +161,9 @@ class ChartInfo(PlayInfo):
     
     level_label: str
     song_id: int
+    # Preserve the source that supplied this record so provider adapters can
+    # normalize its song ID without guessing from the numeric value.
+    source: str = "unknown"
 
 
 class Data(BaseModel):
