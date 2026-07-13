@@ -8,7 +8,9 @@ def normalize_chart_type(raw: object) -> str | None:
         return "standard"
     if value in {"dx", "deluxe"}:
         return "dx"
-    return None
+    if value == "utage":
+        return None
+    raise ValueError(f"unsupported chart type: {raw!r}")
 
 
 def normalize_song_id(

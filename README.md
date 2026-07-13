@@ -142,10 +142,16 @@ core.MAIMAI_DATA_PROVIDER
 统一谱面键：
 
 ```text
-canonical song_id + standard/dx + difficulty_index
+normalized base song_id + standard/dx + difficulty_index
 ```
 
-水鱼 DX 偏移 ID 会在 Provider 内归一。消费者不得自行执行 `% 10000` 或直接读取 maimaidx 私有数据库。
+`song_id` 是规范化后的基础歌曲 ID：同一首歌曲的 Standard 与 DX 谱面共享
+同一个 ID，通过 `chart_type` 区分。水鱼 DX 偏移 ID 会在 Provider 内归一；消费者
+不得自行执行 `% 10000` 或直接读取 maimaidx 私有数据库。
+
+`amia-core` 定义 `MaimaiDataProvider` 契约；`lxns_b50` 实现并注册
+`maimai.data`；`maimai-coach` 和 `maimai-rival` 只能通过 Core 获取该进程内
+Python 接口，不能读取 maimaidx 数据库。Provider 不是 HTTP API。
 
 消费示例：
 

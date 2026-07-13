@@ -18,6 +18,8 @@ class ProviderNormalizationTests(unittest.TestCase):
         self.assertEqual(normalize_chart_type("DX"), "dx")
         self.assertEqual(normalize_chart_type("deluxe"), "dx")
         self.assertIsNone(normalize_chart_type("utage"))
+        with self.assertRaises(ValueError):
+            normalize_chart_type("unknown")
 
     def test_lxns_and_fish_identify_the_same_dx_chart(self):
         self.assertEqual(normalize_song_id(8, source="lxns", chart_type="dx"), 8)
