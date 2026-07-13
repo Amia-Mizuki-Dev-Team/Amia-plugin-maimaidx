@@ -1,152 +1,242 @@
 # Amia-plugin-maimaidx
 
-`Amia-plugin-maimaidx` 是 Amia / MizukiBot 项目使用的舞萌 DX 查分、成绩分析与群聊互动插件，项目原名为 `lxns_b50`。
+`Amia-plugin-maimaidx` 是 Amia / MizukiBot 生态中的舞萌 DX 综合插件，实际 NoneBot 插件标识符为 `lxns_b50`。
 
-插件基于 NoneBot2 开发，当前主要面向 OneBot V11 运行环境，整合落雪（LXNS）与水鱼（Diving-Fish）双数据源，并与项目内的账号映射、数据库同步和 QQ 官方机器人消息组件协同工作。
+插件面向 Gensokyo Release007 + OneBot V11 运行环境，整合落雪（LXNS）与水鱼（Diving-Fish）双数据源，提供玩家查分、曲库检索、图片渲染、进度统计、群聊猜歌以及供其他插件消费的 `MaimaiDataProvider`。
 
-> 本仓库目前是面向现有机器人环境维护的项目组件，不是可直接安装的通用 NoneBot 插件。独立部署前需要补齐项目级依赖、资源文件和数据源配置。
+本仓库不是单纯的 B50 插件。`lxns_b50` 是历史插件标识符，为保持现有部署兼容暂不修改。
 
-## 主要能力
+## 当前状态
 
-- 落雪与水鱼双数据源查询，支持用户级默认数据源切换。
-- Best 50、AP 50、单曲成绩、全服谱面统计与分数线计算。
-- Rating 曲线、最近成绩、游玩热力图与双平台绑定状态诊断。
-- 曲目、定数、BPM、曲师、谱师和别名检索。
-- 定数表、完成表、牌子进度、等级进度和上分推荐。
-- 群内猜歌与猜曲绘游戏，并提供群级启用、关闭和重置控制。
-- 启动时自动同步曲库、别名和曲绘，校验并清理损坏资源。
-- 每日凌晨 04:00 自动执行曲库与资源同步。
-- 支持普通文本输出，以及项目适配的 QQ 官方机器人 Markdown 与按钮消息。
+当前 `main` 已包含：
 
-## 当前指令
+- LXNS 与水鱼双数据源查询及回退逻辑；
+- B50、AP50、单曲成绩、全服谱面统计和分数线；
+- Rating 曲线、最近成绩、成绩热力图；
+- 曲库、定数、BPM、曲师、谱师与双数据源别名检索；
+- 定数表、完成表、牌子进度、等级进度和上分建议；
+- 群内猜歌与猜曲绘；
+- `MaimaiDataProvider` 及统一谱面身份归一化；
+- DX Pass 选择、玩家信息查询及 HTML/PIL 双渲染实现。
 
-以下内容以 `plugins/lxns_b50/command/__init__.py` 当前导入的模块为准。
+需要注意：
 
-### 成绩查询
+- `command/mai_pass.py` 当前仍未被 `command/__init__.py` 导入，因此 `dxpass`、`名片`、`金卡` 尚未进入默认加载链路；
+- Economy 已提供跨插件余额、扣费和退款公共接口，但当前 maimaidx 的 DX Pass 命令尚未完成 200 PC 扣费、失败退款和幂等接入；
+- 主题切换系统尚未进入当前提交，不应视为已启用功能；
+- 账号绑定统一由 `maimai_sync` / qbind 负责，maimaidx 不再提供第二套 `lxbind` 或 OAuth 绑定入口。
+
+## 功能概览
+
+### 玩家查分与资料
 
 | 指令 | 说明 |
 | --- | --- |
 | `b50` | 生成玩家 Best 50 成绩图 |
 | `ap50` | 生成玩家 AP 50 成绩图 |
-| `minfo <曲名或 ID>` | 查询玩家单曲成绩与谱面信息 |
+| `minfo <曲名或 ID>` | 查询个人单曲成绩与谱面信息 |
 | `ginfo <曲名或 ID>` | 查询谱面全服统计信息 |
-| `分数线 <曲目> <目标达成率>` | 计算目标达成率对应的容错情况 |
+| `分数线 <曲目> <目标达成率>` | 计算目标达成率对应的容错 |
+| `mai状态` / `详细信息` / `mai个人中心` | 查看绑定状态、默认数据源和玩家概况 |
+| `切换数据源 <落雪或水鱼>` | 修改当前用户默认查询数据源 |
+| `mai曲线` | 生成 LXNS Rating 历史曲线 |
+| `mai最近` | 生成最近成绩图 |
+| `mai热度` | 生成近 30 天成绩上传热力图 |
 
-### 玩家与数据源
-
-| 指令 | 说明 |
-| --- | --- |
-| `mai帮助` | 查看插件指令帮助 |
-| `lxbind` | 获取落雪 OAuth 授权绑定入口 |
-| `mai状态` | 检查落雪、水鱼绑定状态和当前数据源 |
-| `切换数据源 <落雪或水鱼>` | 修改当前用户的默认查询数据源 |
-| `mai曲线` | 生成 Rating 历史趋势图 |
-| `mai最近` | 查询最近成绩 |
-| `mai热度` | 生成游玩热力图 |
-
-### 曲目与别名检索
+### 曲库、别名与查歌
 
 | 指令 | 说明 |
 | --- | --- |
 | `查歌 <关键词>` | 按曲名模糊搜索 |
-| `id <曲目 ID>` | 查询曲目和谱面详细信息 |
+| `id <曲目 ID>` | 查询曲目和谱面详情 |
 | `定数查歌 <定数或范围>` | 按定数搜索曲目 |
-| `bpm查歌 <BPM>` | 按 BPM 搜索曲目 |
+| `bpm查歌 <BPM或范围>` | 按 BPM 搜索曲目 |
 | `曲师查歌 <关键词>` | 按曲师搜索曲目 |
 | `谱师查歌 <关键词>` | 按谱师搜索曲目 |
-| `<别名>是什么歌` | 通过别名反查歌曲 |
+| `<别名>是什么歌` / `<别名>是啥歌` | 通过别名反查歌曲 |
 | `<曲名或 ID>有什么别名` | 查看歌曲别名 |
-| `添加本地别名 <ID> <别名>` | 向本地别名库添加记录 |
+| `添加本地别名 <ID> <别名>` | 添加本地补充别名 |
+| `更新别名库` | 超级用户私聊手动更新曲库与别名 |
 
-### 定数表与进度
+别名来源为：
+
+```text
+LXNS 别名 + 水鱼别名 + 本地补充别名
+```
+
+插件以并集方式聚合并去重。出现同名或同别名冲突时，应返回候选结果，不能静默选择第一首歌曲。
+
+本项目不采用别名投票、社区审核或别名推送体系。
+
+### 定数表、完成表与进度
 
 | 指令格式 | 说明 |
 | --- | --- |
-| `<等级>定数表` | 查询指定等级定数表，当前支持 Lv.7 至 Lv.15 |
-| `<等级><目标>完成表` | 查询指定等级的完成情况 |
-| `<版本><目标>完成表` | 查询版本牌子完成情况 |
+| `<等级>定数表` | 查询指定等级定数表 |
+| `<等级><目标>完成表` | 查询指定等级 AP、FC 等完成情况 |
+| `<版本><目标>完成表` | 查询指定版本牌子完成情况 |
 | `<版本><目标>进度` | 查询版本牌子进度 |
 | `<等级><评价>进度` | 查询等级目标进度 |
-| `我要上<分数>` | 根据成绩数据生成上分建议 |
+| `我要上<分数>` | 根据现有成绩生成上分建议 |
 | `<达成率>分数列表` | 查询指定达成率相关成绩列表 |
 
-### 群聊互动与管理
+`我要上XX分` 属于当前插件已有的查询与推荐逻辑，不等同于后续独立的 Coach 功能。
+
+### 群聊互动
 
 | 指令 | 权限 | 说明 |
 | --- | --- | --- |
 | `猜歌` | 群成员 | 开启文字提示猜歌 |
 | `猜曲绘` | 群成员 | 开启局部曲绘猜歌 |
-| `开启mai猜歌` | 超级用户、群主或管理员 | 开启本群猜歌功能 |
-| `关闭mai猜歌` | 超级用户、群主或管理员 | 关闭本群猜歌功能 |
+| `开启mai猜歌` | 超级用户、群主或管理员 | 开启本群猜歌 |
+| `关闭mai猜歌` | 超级用户、群主或管理员 | 关闭本群猜歌 |
 | `重置猜歌` | 超级用户、群主或管理员 | 清理本群当前游戏状态 |
-| `更新定数表` | 超级用户，私聊 | 重新生成定数表资源 |
-| `更新完成表` | 超级用户，私聊 | 重新生成完成表资源 |
-| `更新别名库` | 超级用户，私聊 | 手动同步曲库与别名 |
 
-## 当前加载边界
+群猜歌状态按群隔离，回答监听不得影响无关消息或其他插件 Matcher。
 
-仓库中存在部分未进入默认加载链路的代码，维护和宣传时需要区分“代码已存在”和“功能已启用”。
+## DX Pass 当前实现
 
-- `command/mai_pass.py` 中保留了 `dxpass` 名片合成实现，但当前未被 `command/__init__.py` 导入，不能视为默认启用功能。
-- `听歌猜歌` 和 `别名猜歌` 当前只出现在帮助文本及旧文档中，没有对应的已加载 Matcher 实现。
-- 新功能加入后，应同时更新 `command/__init__.py`、插件帮助文本、PicMenu 元数据和本 README。
+仓库内已有：
 
-## 项目结构
+- 角色、外框、背景选择；
+- LXNS 玩家资料和好友码读取；
+- HTML 卡片渲染；
+- HTML 失败时回退 PIL；
+- 官方机器人按钮选择流程；
+- `-p` / `--preview` 角色预览；
+- `--type chara|partner` 立绘类型选择。
 
-```text
-plugins/lxns_b50/
-├── __init__.py                  # 插件入口、启动流程和定时任务
-├── config.py                    # 配置模型、资源路径和游戏常量
-├── command/
-│   ├── mai_alias.py             # 别名查询与维护
-│   ├── mai_base.py              # 帮助、绑定、状态和数据源切换
-│   ├── mai_guess.py             # 群内猜歌与猜曲绘
-│   ├── mai_score.py             # B50、AP50、单曲和分数线
-│   ├── mai_search.py            # 曲目与谱面检索
-│   └── mai_table.py             # 定数表、完成表、进度和上分推荐
-└── libraries/
-    ├── maimaidx_api_data.py     # 双数据源请求、鉴权与路由
-    ├── maimaidx_best_50.py      # Best 50 图片生成
-    ├── maimaidx_music.py        # 曲库、别名和资源同步
-    ├── maimaidx_music_info.py   # 曲目信息与表格绘制
-    ├── maimaidx_player_score.py # 玩家成绩处理
-    ├── lib_music_db.py          # musicDB 缓存与曲绘下载
-    ├── image.py                 # 图片处理与资源校验
-    └── tool.py                  # Playwright 截图等工具
+当前仍需完成：
+
+1. 在默认加载链路中导入 `mai_pass.py`；
+2. 通过 `nonebot.require("Amia-plugin-economy")` 使用 Economy 公共接口；
+3. 制作前展示 200 PC 确认卡；
+4. 确认后原子扣费；
+5. 渲染失败自动退款；
+6. 使用幂等键阻止重复按钮或事件重发导致重复扣费；
+7. DX Pass 固定视觉，不受未来普通主题系统影响。
+
+## amia-core Provider
+
+稳定 Provider 名称：
+
+```python
+core.MAIMAI_DATA_PROVIDER
+# "maimai.data"
 ```
 
-## 项目级依赖
+当前实现：
 
-除常规 Python 依赖外，插件直接引用了 MizukiBot 运行环境中的项目模块，因此不能仅复制插件目录后独立运行。
+| 方法 | 语义 |
+| --- | --- |
+| `get_player_summary()` | 玩家名称、Rating、段位 Rating 和牌子概览 |
+| `get_player_records()` | 完整成绩，使用水鱼 Developer API `/dev/player/records` |
+| `get_music_catalog()` | 归一化并去重后的歌曲目录 |
+| `get_chart_info()` | 按统一谱面键查询谱面信息 |
+| `get_player_best_records()` | maimaidx 自有 B50 扩展，不属于 Core 稳定契约 |
 
-- `maimai_sync`：数据库初始化、用户绑定、消息构建和同步数据目录。
-- `src.plugins.qbind`：将 QQ 官方机器人虚拟用户 ID 映射为真实 QQ。
-- `nonebot_plugin_apscheduler`：每日曲库同步任务。
-- PicMenu-Next 兼容元数据：用于项目菜单自动扫描和展示。
+统一谱面键：
 
-常用第三方依赖包括 NoneBot2、OneBot V11 Adapter、Pillow、httpx、curl_cffi、Pydantic、pyecharts、Playwright 和 zhconv。具体版本应由机器人主项目统一锁定。
+```text
+canonical song_id + standard/dx + difficulty_index
+```
 
-## 配置项
+水鱼 DX 偏移 ID 会在 Provider 内归一。消费者不得自行执行 `% 10000` 或直接读取 maimaidx 私有数据库。
 
-配置支持小写字段名及对应的大写环境变量别名。敏感凭据必须通过运行环境提供，不应写入代码或提交到仓库。
+消费示例：
 
-| 配置项 | 说明 | 默认行为 |
+```python
+from nonebot import require
+
+core = require("amia_core")
+require("lxns_b50")
+
+provider = core.get_maimai_provider(core.MAIMAI_DATA_PROVIDER)
+```
+
+实际 Python 模块路径由部署方式决定，不属于稳定公共接口。跨插件代码不得硬编码 `src.plugins.*`。
+
+## 依赖关系
+
+插件通过 `nonebot.require()` 使用以下公共依赖：
+
+- `amia_core`：身份模型和 `MaimaiDataProvider` 注册表；
+- `maimai_sync`：数据库初始化、绑定、消息构建和同步数据；
+- `qbind`：将 Gensokyo Release007 的虚拟用户 ID 解析为 canonical QQ；
+- `nonebot_plugin_apscheduler`：每日同步任务；
+- `Amia-plugin-economy`：DX Pass 后续使用的余额、扣费和退款公共接口。
+
+QQ 官方机器人场景中，虚拟 `user_id` 不得直接传入 LXNS、水鱼或 Economy。个人数据、主题和付费功能必须使用 canonical 身份。
+
+## 安装与加载
+
+插件不要求 Bot 项目使用固定的 `src` 目录结构。
+
+### 目录插件
+
+将仓库放入任意插件目录，并在 Bot 项目的 `pyproject.toml` 中配置其父目录：
+
+```toml
+[tool.nonebot]
+plugin_dirs = ["plugins/Amia-plugin-maimaidx/plugins"]
+```
+
+### 安装到 Python 环境
+
+也可以将插件打包并安装到当前虚拟环境，再通过插件标识符加载：
+
+```toml
+[tool.nonebot]
+plugins = ["lxns_b50"]
+```
+
+无论代码位于普通插件目录还是 `site-packages`，运行数据都不应写入代码目录。
+
+## 数据目录
+
+默认数据目录相对于 Bot 工作目录解析：
+
+```text
+<bot-root>/data/lxns_b50
+<bot-root>/data/mai_sync_data
+```
+
+推荐布局：
+
+```text
+<bot-root>/
+├── .env
+├── data/
+│   ├── lxns_b50/
+│   └── mai_sync_data/
+├── plugins/                  # 可选：目录插件模式
+└── .venv/                    # 可选：安装模式
+    └── Lib/site-packages/
+```
+
+代码目录与运行数据目录必须分离。升级、卸载或重装插件不应删除曲库、曲绘、别名和用户缓存。
+
+## 配置
+
+敏感凭据只能通过环境变量或 NoneBot 配置提供，不能写入代码或提交仓库。
+
+| 配置项 | 说明 | 默认值 |
 | --- | --- | --- |
-| `PROBER_SOURCE` | 默认数据源，可选 `lxns` 或 `diving-fish` | `lxns` |
-| `LXNS_TOKEN` | 落雪开发者凭据 | 应由部署环境提供 |
-| `MAIMAIDX_TOKEN` | 水鱼开发者凭据 | 未配置时部分接口不可用 |
-| `LXNS_B50_PATH` | 图片、曲绘、定数表等资源根目录 | `data/lxns_b50` |
-| `MAI_SYNC_DATA_PATH` | `musicDB.json` 等同步数据目录 | `data/mai_sync_data` |
-| `USE_MARKDOWN` | 是否启用 Markdown 与按钮输出 | `false` |
-| `OFFICIAL_BOT_IDS` | 需要使用官方机器人消息模式的 Bot ID 列表 | 由部署端配置 |
-| `SAVEINMEM` | 是否尝试预加载图片资源 | `true` |
+| `PROBER_SOURCE` | 默认数据源：`lxns` 或 `diving-fish` | `lxns` |
+| `LXNS_TOKEN` | LXNS 开发者 API 密钥 | 空 |
+| `MAIMAIDX_TOKEN` | 水鱼 Developer Token | 空 |
+| `LXNS_B50_PATH` | 图片、曲绘、定数表等资源目录 | `data/lxns_b50` |
+| `MAI_SYNC_DATA_PATH` | `musicDB.json` 等同步目录 | `data/mai_sync_data` |
+| `USE_MARKDOWN` | 启用 Gensokyo Markdown 与按钮 | `false` |
+| `OFFICIAL_BOT_IDS` | 官方机器人 Bot ID 列表 | 由部署端配置 |
+| `SAVEINMEM` | 启动时预加载部分图片资源 | `true` |
 
 示例：
 
 ```dotenv
 PROBER_SOURCE=lxns
-LXNS_TOKEN=replace-with-your-token
-MAIMAIDX_TOKEN=replace-with-your-token
+LXNS_TOKEN=
+MAIMAIDX_TOKEN=
 LXNS_B50_PATH=data/lxns_b50
 MAI_SYNC_DATA_PATH=data/mai_sync_data
 USE_MARKDOWN=false
@@ -154,30 +244,64 @@ OFFICIAL_BOT_IDS=[]
 SAVEINMEM=true
 ```
 
-## 启动与同步流程
+不要在日志、截图或 Issue 中输出真实 Token、数据库密码或完整 `Loaded Config`。
 
-插件启动后会依次执行以下工作：
+## 启动与同步
 
-1. 初始化 `maimai_sync` 使用的数据库和绑定服务。
-2. 加载数据源凭据与请求代理。
-3. 同步落雪、水鱼曲库及别名数据。
-4. 加载 `musicDB.json` 本地缓存。
-5. 检查曲绘文件大小和文件头，删除损坏资源。
-6. 在具备落雪凭据时补齐缺失曲绘。
-7. 初始化群猜歌缓存和可选的图片内存预加载。
-8. 每日凌晨 04:00 再次执行数据更新。
+启动阶段会：
 
-外部数据源不可用时，部分流程会降级或跳过，但查询结果仍取决于本地缓存、玩家绑定状态和对应 API 的可用性。
+1. 初始化 `maimai_sync` 数据库和绑定服务；
+2. 加载 LXNS 与水鱼凭据；
+3. 聚合双数据源曲库和别名；
+4. 加载 `musicDB.json`；
+5. 检查并清理损坏曲绘；
+6. 补齐缺失曲绘；
+7. 初始化群猜歌状态和可选图片预加载；
+8. 注册 `MaimaiDataProvider`；
+9. 每日 04:00 执行数据更新。
 
-## 维护要求
+## Gensokyo Release007 兼容要求
 
-- 修改双数据源逻辑时，必须区分落雪 ID、水鱼 ID、标准谱面、DX 谱面和宴会场 ID。
-- 修改绑定逻辑时，需要同时验证普通 OneBot 用户 ID 与 QQ 官方机器人虚拟 ID 映射。
-- 修改图片生成逻辑时，需要检查字体缺失、资源损坏、长文本溢出和 Playwright 环境。
-- 修改群游戏时，需要正确清理群级状态，避免旧任务影响下一轮游戏。
-- 不得提交 Token、Cookie、数据库密码、OAuth 密钥或真实运行数据。
-- 文档、帮助文本和实际 Matcher 必须保持一致。
+- 统一使用现有 Markdown、按钮和普通文本降级封装；
+- 按钮发送失败时必须回退为可复制的普通命令；
+- 官方机器人虚拟身份先经 qbind/Core 解析；
+- 未绑定提示同一事件最多发送一次；
+- `qbind`、`maimai_sync`、`lxns_b50` 在启动日志中均应只加载一次；
+- 付费按钮需要确认、幂等和操作者身份校验；
+- 群猜歌监听不得抢占其他插件的正常命令。
+
+## 测试
+
+在仓库根目录执行：
+
+```bash
+python -m compileall plugins/lxns_b50
+python -m unittest discover -s tests -v
+```
+
+测试路径与实际部署目录无关，不要求 Bot 项目存在 `src`。
+
+上线前至少验证：
+
+- 插件和依赖各只加载一次；
+- B50、AP50、minfo、ginfo、分数线；
+- mai状态、数据源切换、曲线、最近成绩和热力图；
+- 查歌、ID、定数、BPM、曲师、谱师和别名；
+- 定数表、完成表、牌子和进度；
+- 猜歌、猜曲绘和群级管理；
+- Core Provider 完整成绩数量与 canonical 谱面键；
+- Gensokyo Release007 虚拟身份；
+- DX Pass 默认加载、200 PC 扣费、失败退款和重复点击幂等。
+
+## 当前已知问题
+
+- `mai_pass.py` 未进入默认导入链，DX Pass 命令当前可能无法注册；
+- Economy 公共计费接口已经存在，但 maimaidx 尚未调用；
+- 主题系统尚未实现；
+- `mai_alias.py` 的数字查询回退分支存在未定义变量风险，需要补充测试；
+- 部分帮助文本仍包含尚未实现或未加载的猜歌子模式，应与实际 Matcher 同步；
+- 启动日志和 PicMenu 元数据仍需继续清理旧的工程化表述。
 
 ## 授权说明
 
-本仓库暂未选择开源许可证。仓库公开可见不代表自动授权复用、再分发、商用或生产部署。
+本仓库目前未声明开源许可证。仓库公开可见不代表自动授权复用、再分发、商用或生产部署。
