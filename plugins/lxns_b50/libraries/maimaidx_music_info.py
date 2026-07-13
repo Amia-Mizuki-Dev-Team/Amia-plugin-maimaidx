@@ -126,7 +126,7 @@ async def draw_music_info(
                 else:
                     rating = value
                 tb.draw(536 + 101 * _n, 1030 + 47 * (num - 2), size, rating, default_color, 'mm')
-    mr.draw(600, 1212, 22, 'Powered By MizukiBot LXNS', default_color, 'mm')
+    mr.draw(600, 1212, 22, 'Amia_晓山瑞希', default_color, 'mm')
     return MessageSegment.image(image_to_base64(im))
 
 
@@ -242,7 +242,7 @@ async def draw_music_play_data(qqid: int, music_id: str) -> Union[str, MessageSe
         if len(diff) == 4:
             mr.draw(800, 302 + y * 4, 30, '没有该难度', color, 'mm')
 
-        mr.draw(600, 827, 22, 'Powered By MizukiBot LXNS', color, 'mm')
+        mr.draw(600, 827, 22, 'Amia_晓山瑞希', color, 'mm')
         msg = MessageSegment.image(image_to_base64(im))
         
     except (UserNotFoundError, UserNotExistsError, UserDisabledQueryError, MusicNotPlayError) as e:

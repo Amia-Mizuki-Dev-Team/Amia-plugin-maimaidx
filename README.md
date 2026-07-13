@@ -19,12 +19,7 @@
 - `MaimaiDataProvider` 及统一谱面身份归一化；
 - DX Pass 选择、玩家信息查询及 HTML/PIL 双渲染实现。
 
-需要注意：
-
-- `command/mai_pass.py` 当前仍未被 `command/__init__.py` 导入，因此 `dxpass`、`名片`、`金卡` 尚未进入默认加载链路；
-- Economy 已提供跨插件余额、扣费和退款公共接口，但当前 maimaidx 的 DX Pass 命令尚未完成 200 PC 扣费、失败退款和幂等接入；
-- 主题切换系统尚未进入当前提交，不应视为已启用功能；
-- 账号绑定统一由 `maimai_sync` / qbind 负责，maimaidx 不再提供第二套 `lxbind` 或 OAuth 绑定入口。
+账号绑定统一由 `maimai_sync` / qbind 负责，maimaidx 不再提供第二套 `lxbind` 或 OAuth 绑定入口。
 
 ## 功能概览
 
@@ -103,18 +98,27 @@ LXNS 别名 + 水鱼别名 + 本地补充别名
 - HTML 卡片渲染；
 - HTML 失败时回退 PIL；
 - 官方机器人按钮选择流程；
+- 制作前余额检查和确认；
+- Economy 原子扣除 200 PC、幂等键和渲染失败退款；
+- `dxpass-confirm` / `dxpass-cancel` 仅允许原发起人操作；
 - `-p` / `--preview` 角色预览；
 - `--type chara|partner` 立绘类型选择。
 
-当前仍需完成：
+DX Pass 固定视觉，不受普通主题系统影响。
 
-1. 在默认加载链路中导入 `mai_pass.py`；
-2. 通过 `nonebot.require("Amia-plugin-economy")` 使用 Economy 公共接口；
-3. 制作前展示 200 PC 确认卡；
-4. 确认后原子扣费；
-5. 渲染失败自动退款；
-6. 使用幂等键阻止重复按钮或事件重发导致重复扣费；
-7. DX Pass 固定视觉，不受未来普通主题系统影响。
+制作流程为：查询余额 → 显示确认卡 → 原发起人确认 → 原子扣除 200 PC → 渲染；渲染失败自动退款。
+
+## 主题
+
+普通舞萌渲染支持 `default` 与 `mizuki` 两个主题。主题按 canonical 用户身份保存，运行数据写入 `data/lxns_b50/user_themes.json`。
+
+```text
+mai主题
+mai主题列表
+切换mai主题 <default|mizuki>
+```
+
+主题不影响 `dxpass`、`名片` 和 `金卡`。
 
 ## amia-core Provider
 

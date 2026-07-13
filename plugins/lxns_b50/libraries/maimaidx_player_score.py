@@ -227,7 +227,7 @@ class DrawScore(ScoreBaseImage):
         
         height = self._im.size[1]
         self._im.alpha_composite(self.design_bg.resize((800, 72)), (300, height - 110))
-        self._sy.draw(700, height - 76, 18, 'Powered By MizukiBot LXNS', self.text_color, 'mm')
+        self._sy.draw(700, height - 76, 18, 'Amia_晓山瑞希', self.text_color, 'mm')
         return self._im
 
     def draw_plan(

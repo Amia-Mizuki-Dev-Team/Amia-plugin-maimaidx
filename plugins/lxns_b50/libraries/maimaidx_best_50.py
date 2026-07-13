@@ -257,7 +257,7 @@ class DrawBest(ScoreBaseImage):
         else:
             self._tb.draw(570, 172, 17, f'B35: {sdrating} + B15: {dxrating} = {self.Rating}', (0, 0, 0, 255), 'mm', 3, (255, 255, 255, 255))
 
-        self._sy.draw(700, 1570, 27, 'Powered By MizukiBot LXNS', self.text_color, 'mm', 5, (255, 255, 255, 255))
+        self._sy.draw(700, 1570, 27, 'Amia_晓山瑞希', self.text_color, 'mm', 5, (255, 255, 255, 255))
 
         self.whiledraw(self.sdBest, False)
         self.whiledraw(self.dxBest, True)

@@ -324,7 +324,7 @@ class DrawPass:
         watermark_layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
         draw = ImageDraw.Draw(watermark_layer)
         font = ImageFont.truetype(self.font_zh, 32)
-        text = "MizukiBot Preview  " * 3
+        text = "Amia_晓山瑞希 Preview  " * 3
         
         for y in range(-200, img.height + 200, 150):
             draw.text((-100, y), text, font=font, fill=(128, 128, 128, 40))

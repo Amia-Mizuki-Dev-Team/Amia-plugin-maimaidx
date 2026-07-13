@@ -1,13 +1,15 @@
 import io
 import re
 import traceback
+import time
+import uuid
 from pathlib import Path
 from typing import Optional
 
 import httpx
 import qrcode
 from loguru import logger as log
-from nonebot import on_command
+from nonebot import on_command, require
 from nonebot.adapters.onebot.v11 import Bot, Message, MessageEvent, MessageSegment
 from nonebot.exception import FinishedException
 from nonebot.params import CommandArg, Depends
@@ -20,6 +22,12 @@ from ..libraries.tool import render_html_card_to_base64
 from ..config import static
 
 dxpass = on_command("dxpass", aliases={"dxpass", "pass", "名片", "金卡"})
+dxpass_confirm = on_command("dxpass-confirm", aliases={"dxpass_confirm"})
+dxpass_cancel = on_command("dxpass-cancel", aliases={"dxpass_cancel"})
+economy_plugin = require("Amia-plugin-economy")
+DXPASS_PRICE = 200
+_PENDING_TTL = 300
+_pending_dxpass: dict[str, dict] = {}
 
 _BACKGROUND_PAGE_SIZE = 6
 _FRAME_LABELS = {
@@ -226,6 +234,53 @@ def _looks_like_friend_code(text: str) -> bool:
     return text.isdigit() and len(text) >= 12
 
 
+def _prune_pending() -> None:
+    now = time.monotonic()
+    for token, item in list(_pending_dxpass.items()):
+        if now - float(item.get("created_at", 0)) > _PENDING_TTL:
+            _pending_dxpass.pop(token, None)
+
+
+def _resolve_canonical_id(bot: Bot, raw_qq: int) -> Optional[int]:
+    resolved = get_real_qq(str(raw_qq))
+    if resolved and str(resolved).isdigit():
+        return int(resolved)
+    if is_official_bot(bot.self_id):
+        return None
+    return int(raw_qq)
+
+
+def _confirmation_card(token: str, balance: int) -> Message:
+    text = (
+        "### 制作 DX Pass\n\n"
+        f"本次制作将消耗 **{DXPASS_PRICE} PC**。\n"
+        f"当前余额：**{balance} PC**\n\n"
+        "请确认后继续。"
+    )
+    buttons = [[
+        {"render_data.label": f"确认制作（{DXPASS_PRICE} PC）", "action.data": f"dxpass-confirm {token}", "action.enter": True},
+        {"render_data.label": "取消", "action.data": f"dxpass-cancel {token}", "action.enter": True},
+    ]]
+    return Message(_build_markdown_segment(text, buttons))
+
+
+async def _render_dxpass_image(drawer: DrawPass) -> MessageSegment:
+    try:
+        qr_data_uri = _make_qr_data_uri("https://help.mizuki.top")
+        html_doc = drawer.build_usagi_card_html(qr_data_uri)
+        return MessageSegment.image(await render_html_card_to_base64(html_doc))
+    except FinishedException:
+        raise
+    except Exception:
+        log.exception("[dxpass] HTML 名片渲染失败，回退到 PIL 渲染")
+        img = drawer.draw()
+        buf = io.BytesIO()
+        img.convert("RGB").save(buf, format="JPEG", quality=90)
+        import base64
+
+        return MessageSegment.image(f"base64://{base64.b64encode(buf.getvalue()).decode('utf-8')}")
+
+
 @dxpass.handle()
 async def _(
     bot: Bot,
@@ -233,9 +288,11 @@ async def _(
     message: Message = CommandArg(),
     user_id: Optional[int] = Depends(get_at_qq),
 ):
+    _prune_pending()
     raw_qq = user_id or event.user_id
-    real_qq_str = get_real_qq(str(raw_qq))
-    qqid = int(real_qq_str) if (real_qq_str and real_qq_str.isdigit()) else raw_qq
+    qqid = _resolve_canonical_id(bot, raw_qq)
+    if qqid is None:
+        await dxpass.finish("当前官方机器人身份尚未完成绑定，无法查询资料或制作 DX Pass。请先完成 qbind 绑定。", reply_message=True)
     args = message.extract_plain_text().strip()
     raw_parts = [p.strip() for p in args.split() if p.strip()]
     friend_code_arg = raw_parts[0] if raw_parts and _looks_like_friend_code(raw_parts[0]) else ""
@@ -370,26 +427,103 @@ async def _(
             img_res = MessageSegment.image(f"base64://{base64.b64encode(buf.getvalue()).decode('utf-8')}")
             await dxpass.finish(img_res, reply_message=True)
 
-        try:
-            qr_data_uri = _make_qr_data_uri("https://help.mizuki.top")
-            html_doc = drawer.build_usagi_card_html(qr_data_uri)
-            img_res = MessageSegment.image(await render_html_card_to_base64(html_doc))
-            await dxpass.finish(img_res, reply_message=True)
-        except FinishedException:
-            # finish() uses this exception to stop the matcher after sending.
-            # It is not an HTML rendering failure and must not trigger PIL fallback.
-            raise
-        except Exception:
-            log.exception("[dxpass] HTML 名片渲染失败，回退到 PIL 渲染")
-            img = drawer.draw()
-            buf = io.BytesIO()
-            img.convert("RGB").save(buf, format="JPEG", quality=90)
-            import base64
+        balance_result = await economy_plugin.get_public_balance(qqid)
+        if not balance_result.get("status"):
+            await dxpass.finish("暂时无法读取 Economy 余额，请稍后重试。", reply_message=True)
+        balance = int(balance_result.get("balance", 0))
+        if balance < DXPASS_PRICE:
+            await dxpass.finish(
+                f"制作 DX Pass 需要 {DXPASS_PRICE} PC；当前余额：{balance} PC。",
+                reply_message=True,
+            )
 
-            img_res = MessageSegment.image(f"base64://{base64.b64encode(buf.getvalue()).decode('utf-8')}")
-            await dxpass.finish(img_res, reply_message=True)
+        token = uuid.uuid4().hex
+        _pending_dxpass[token] = {
+            "created_at": time.monotonic(),
+            "canonical_user_id": qqid,
+            "event_user_id": int(event.user_id),
+            "bot_id": str(bot.self_id),
+            "drawer": drawer,
+        }
+        await dxpass.finish(_confirmation_card(token, balance), reply_message=True)
     except FinishedException:
         raise
     except Exception as e:
         log.error(f"[dxpass] 合成名片遭遇未捕获异常\n{traceback.format_exc()}")
         await dxpass.finish(f"名片合成失败，原因: {e}", reply_message=True)
+
+
+def _pending_token(message: Message) -> str:
+    return message.extract_plain_text().strip().split()[0] if message.extract_plain_text().strip() else ""
+
+
+def _authorized_pending(bot: Bot, event: MessageEvent, token: str) -> Optional[dict]:
+    _prune_pending()
+    item = _pending_dxpass.get(token)
+    if not item:
+        return None
+    if item.get("bot_id") != str(bot.self_id):
+        return None
+    if int(item.get("event_user_id", -1)) != int(event.user_id):
+        return None
+    canonical = _resolve_canonical_id(bot, event.user_id)
+    if canonical is None or int(item.get("canonical_user_id", -1)) != canonical:
+        return None
+    return item
+
+
+@dxpass_cancel.handle()
+async def _(bot: Bot, event: MessageEvent, message: Message = CommandArg()):
+    token = _pending_token(message)
+    item = _authorized_pending(bot, event, token)
+    if not item:
+        await dxpass_cancel.finish("这条 DX Pass 制作请求不存在、已过期，或不是发起人。", reply_message=True)
+    _pending_dxpass.pop(token, None)
+    await dxpass_cancel.finish("已取消 DX Pass 制作，本次未扣款。", reply_message=True)
+
+
+@dxpass_confirm.handle()
+async def _(bot: Bot, event: MessageEvent, message: Message = CommandArg()):
+    token = _pending_token(message)
+    item = _authorized_pending(bot, event, token)
+    if not item:
+        await dxpass_confirm.finish("这条 DX Pass 制作请求不存在、已过期，或不是发起人。", reply_message=True)
+
+    # Remove before spending so a retried Gensokyo event cannot execute twice.
+    _pending_dxpass.pop(token, None)
+    spend_key = f"maimaidx.dxpass:{token}"
+    payment = await economy_plugin.try_spend_public(
+        int(item["canonical_user_id"]),
+        DXPASS_PRICE,
+        reason="maimaidx.dxpass",
+        idempotency_key=spend_key,
+    )
+    if not payment.get("status"):
+        code = payment.get("code", "")
+        if code == "insufficient":
+            await dxpass_confirm.finish("余额不足，制作 DX Pass 未扣款。", reply_message=True)
+        if code == "busy":
+            await dxpass_confirm.finish("经济系统正在处理其他账务，本次未扣款；请稍后重新确认。", reply_message=True)
+        await dxpass_confirm.finish("Economy 暂时无法完成扣款，制作 DX Pass 未扣款。", reply_message=True)
+
+    try:
+        img_res = await _render_dxpass_image(item["drawer"])
+    except FinishedException:
+        raise
+    except Exception:
+        refund = await economy_plugin.refund_public(
+            int(item["canonical_user_id"]),
+            DXPASS_PRICE,
+            reason="maimaidx.dxpass.refund",
+            idempotency_key=f"maimaidx.dxpass.refund:{token}",
+        )
+        if refund.get("status"):
+            await dxpass_confirm.finish("DX Pass 渲染失败，已自动退还 200 PC。", reply_message=True)
+        await dxpass_confirm.finish("DX Pass 渲染失败，退款也未能完成，请联系管理员处理。", reply_message=True)
+
+    balance_result = await economy_plugin.get_public_balance(int(item["canonical_user_id"]))
+    balance = balance_result.get("balance") if balance_result.get("status") else "未知"
+    await dxpass_confirm.finish(
+        Message(f"制作 DX Pass 完成，已扣除 {DXPASS_PRICE} PC；当前余额：{balance} PC。\n") + img_res,
+        reply_message=True,
+    )

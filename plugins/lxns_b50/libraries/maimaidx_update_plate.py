@@ -66,7 +66,7 @@ async def update_rating_table() -> str:
                 700, 
                 height - 70, 
                 22, 
-                'Powered By MizukiBot LXNS', 
+                'Amia_晓山瑞希',
                 sbi.text_color, 
                 'mm'
             )
@@ -173,7 +173,7 @@ async def update_plate_table() -> str:
                 700, 
                 height - 70, 
                 22, 
-                'Powered By MizukiBot LXNS', 
+                'Amia_晓山瑞希',
                 sbi.text_color, 
                 'mm'
             )

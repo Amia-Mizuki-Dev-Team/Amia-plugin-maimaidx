@@ -89,7 +89,7 @@ async def _(match = RegexMatched()):
                         reply_message=True
                     )
                 else:
-                    aliases = alias_id
+                    aliases = [type('_Alias', (), {'SongID': int(name), 'Alias': alias_aliases})()]
             else:
                 await alias_song.finish(
                     '未找到此歌曲\n可以使用「添加本地别名」指令给该乐曲添加别名', 
