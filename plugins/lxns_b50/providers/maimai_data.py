@@ -35,6 +35,16 @@ def _value(record: object, *names: str, default=None):
     return default
 
 
+def _field(value: object, *names: str):
+    if value is None:
+        return None
+    for name in names:
+        result = value.get(name) if isinstance(value, dict) else getattr(value, name, None)
+        if result is not None:
+            return result
+    return None
+
+
 def find_chart_music(chart):
     """Find and validate a local catalog entry for a canonical Core chart key."""
     if chart.chart_type not in {"standard", "dx"}:
@@ -60,11 +70,25 @@ def _float_or_none(value: object) -> float | None:
         return None
 
 
+def _required_float(value: object, *, field: str) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"invalid maimai record {field}: {value!r}") from exc
+
+
 def _int_or_none(value: object) -> int | None:
     try:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _required_int(value: object, *, field: str) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"invalid maimai record {field}: {value!r}") from exc
 
 
 def _updated_at(value: object) -> str | None:
@@ -108,7 +132,10 @@ def record_matches_query(record, query) -> bool:
 
 
 def _version(song):
-    return getattr(getattr(song, "basic_info", {}), "version", None) if song else None
+    if song is None:
+        return None
+    basic_info = _field(song, "basic_info")
+    return _optional_text(_field(basic_info, "from", "version") or _field(song, "version"))
 
 
 def _record_to_core(record, *, source: str, query=None):
@@ -122,6 +149,8 @@ def _record_to_core(record, *, source: str, query=None):
         difficulty_index = int(_value(record, "level_index", default=-1))
     except (TypeError, ValueError):
         return None
+    if not 0 <= difficulty_index <= 4:
+        raise ValueError(f"invalid maimai difficulty_index for song {raw_song_id!r}: {difficulty_index}")
     chart = core.MaimaiChartKey(song_id, chart_type, difficulty_index)
     music = find_chart_music(chart)
     if music is None:
@@ -141,8 +170,8 @@ def _record_to_core(record, *, source: str, query=None):
         title=str(_value(record, "title", "song_name", default=music.title) or music.title),
         level=str(_value(record, "level", default="")),
         constant=constant,
-        achievement=float(_value(record, "achievements", default=0) or 0),
-        rating=int(_value(record, "ra", "dx_rating", default=0) or 0),
+        achievement=_required_float(_value(record, "achievements"), field="achievements"),
+        rating=_required_int(_value(record, "ra", "dx_rating"), field="rating"),
         rank=_optional_text(_value(record, "rate")),
         fc=_optional_text(_value(record, "fc")),
         fs=_optional_text(_value(record, "fs")),
@@ -162,10 +191,10 @@ class MaimaidxDataProvider:
             return None
         return core.MaimaiPlayerSummary(
             identity=identity,
-            player_name=player.nickname or str(qq),
-            rating=int(player.rating or 0),
-            additional_rating=int(player.additional_rating or 0),
-            plate=player.plate or None,
+        player_name=_optional_text(_field(player, "nickname")),
+        rating=_required_int(_field(player, "rating"), field="player rating"),
+        additional_rating=_int_or_none(_field(player, "additional_rating")),
+        plate=_optional_text(_field(player, "plate")),
         )
 
     async def get_player_best_records(self, identity, query=None):
@@ -177,9 +206,9 @@ class MaimaidxDataProvider:
         if player is None or player.charts is None:
             return []
         records = []
-        for _chart_type, charts in (("standard", player.charts.sd or []), ("dx", player.charts.dx or [])):
+        for source, charts in (("lxns", player.charts.sd or []), ("lxns", player.charts.dx or [])):
             for record in charts:
-                converted = _record_to_core(record, source=_value(record, "source", default="unknown"), query=query)
+                converted = _record_to_core(record, source=source, query=query)
                 if converted is not None:
                     records.append(converted)
         return records
@@ -197,10 +226,17 @@ class MaimaidxDataProvider:
         if qq is None:
             return []
         raw_records = await maiApi.query_user_get_dev(qqid=qq)
-        if isinstance(raw_records, dict):
-            raw_records = raw_records.get("records", raw_records.get("data", []))
-        if not isinstance(raw_records, list):
+        if raw_records is None:
             return []
+        if isinstance(raw_records, dict):
+            if "records" in raw_records:
+                raw_records = raw_records["records"]
+            elif "data" in raw_records:
+                raw_records = raw_records["data"]
+            else:
+                raise TypeError("WaterFish records response does not contain 'records' or 'data'")
+        if not isinstance(raw_records, list):
+            raise TypeError("WaterFish records response must be a list")
         records = {}
         for record in raw_records:
             converted = _record_to_core(record, source="fish", query=query)
@@ -211,7 +247,9 @@ class MaimaidxDataProvider:
                     existing.rating,
                 ):
                     records[converted.chart] = converted
-        return list(records.values())
+        return sorted(records.values(), key=lambda record: (
+            record.chart.song_id, record.chart.chart_type, record.chart.difficulty_index,
+        ))
 
     async def get_music_catalog(self):
         catalog = {}
@@ -220,7 +258,7 @@ class MaimaidxDataProvider:
             song_id = catalog_song_id(getattr(song, "id", None), chart_type or "")
             if song_id is None:
                 continue
-            title = _optional_text(getattr(song, "title", None))
+            title = _optional_text(_field(song, "title"))
             if title is None:
                 log.warning("Skipping maimai catalog entry without a title id=%r", song_id)
                 continue
@@ -232,24 +270,30 @@ class MaimaidxDataProvider:
                 catalog[song_id] = core.MaimaiSong(
                     song_id=song_id,
                     title=title,
-                    artist=getattr(getattr(song, "basic_info", {}), "artist", None),
+                    artist=_optional_text(_field(_field(song, "basic_info"), "artist")),
                     version=_version(song),
-                    category=getattr(getattr(song, "basic_info", {}), "genre", None),
-                    bpm=_float_or_none(getattr(getattr(song, "basic_info", {}), "bpm", None)),
+                    category=_optional_text(_field(_field(song, "basic_info"), "genre", "category")),
+                    bpm=_float_or_none(_field(_field(song, "basic_info"), "bpm")),
                 )
         return [catalog[song_id] for song_id in sorted(catalog)]
 
     async def get_chart_info(self, chart):
         song = find_chart_music(chart)
-        if song is None or chart.difficulty_index < 0 or chart.difficulty_index >= len(song.level):
+        levels = _field(song, "level") or ()
+        constants = _field(song, "ds") or ()
+        index = chart.difficulty_index
+        if song is None or index < 0 or index >= len(levels) or index >= len(constants):
             return None
+        constant = _float_or_none(constants[index])
+        if constant is None:
+            raise ValueError(f"invalid chart constant for {chart!r}")
         return core.MaimaiChart(
             key=chart,
             title=str(song.title),
-            level=str(song.level[chart.difficulty_index]),
-            constant=float(song.ds[chart.difficulty_index]),
-            version=getattr(getattr(song, "basic_info", {}), "version", None),
-            notes=_notes_total(song, chart.difficulty_index),
+            level=str(levels[index]),
+            constant=constant,
+            version=_version(song),
+            notes=_notes_total(song, index),
         )
 
 
