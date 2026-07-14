@@ -14,7 +14,7 @@ from nonebot.log import logger as log
 # ==========================================
 # 【maimai_sync 数据库整合 — 使用其远程库与本地库，不自行创建】
 # ==========================================
-from .dependencies import initialize_databases, get_user_bind_async, save_user_bind
+from .dependencies import get_user_bind_async, save_user_bind
 from .providers import register_provider
 
 # The provider is usable before network-backed song data is ready.  Register
@@ -74,15 +74,6 @@ async def get_music():
     Bot 启动生命周期钩子：
     执行独立的 Token 代理加载，并通过双端串联聚合完成零阻塞数据同步
     """
-    # ==========================================
-    # 初始化 maimai_sync 数据库（远程 MySQL + 本地 SQLite）
-    # ==========================================
-    try:
-        await initialize_databases()
-        log.info('maimai_sync 数据库初始化成功（云端 MySQL + 本地 SQLite）')
-    except Exception as e:
-        log.warning(f'maimai_sync 数据库初始化失败，将使用远程 API 直查模式: {e}')
-    
     # 初始化开放平台 Token 加载
     maiApi.load_token_proxy()
     log.info(f"MaimaiDX 数据服务总闸启动就绪。当前系统环境指配全局缺省路由为: [ {maiconfig.prober_source} ]")
