@@ -3,11 +3,13 @@ import json
 import random
 import httpx
 import aiofiles
+from dataclasses import dataclass
 from typing import Dict, Any, List, Optional
 from loguru import logger as log
 from ..config import maiconfig, static, music_file, coverdir, guess_file, music_db_path
 from .lib_music_db import music_db_cache, download_all_covers, _download_one_cover, _LXNS_HEADERS
 from .maimaidx_api_data import maiApi
+from .image import music_picture
 
 class Music(dict):
     """支持递归属性访问的 dict 子类，嵌套 dict 和列表中的 dict 也可通过属性访问"""
@@ -103,6 +105,50 @@ class MusicList(list):
         return result
 
 
+def _normalize_lxns_song(song: Dict[str, Any]) -> Music:
+    """Convert the public LXNS song shape to the Fish-compatible shape.
+
+    The command modules consume ``level``/``ds``/``charts`` and
+    ``basic_info``.  Keeping this conversion at the provider boundary lets
+    either public source work when the other one is unavailable.
+    """
+    difficulties = song.get("difficulties") or []
+    levels = []
+    ds_values = []
+    charts = []
+    for difficulty in difficulties:
+        if not isinstance(difficulty, dict):
+            continue
+        levels.append(str(difficulty.get("level", "?")))
+        ds_values.append(difficulty.get("level_value", 0))
+        charts.append(
+            {
+                "notes": difficulty.get("notes") or [],
+                "charter": difficulty.get("note_designer", ""),
+            }
+        )
+
+    raw_type = str(song.get("type", "")).lower()
+    music_type = "DX" if raw_type in {"dx", "deluxe"} else "standard"
+    return Music(
+        {
+            "id": song.get("id"),
+            "title": song.get("title", ""),
+            "type": music_type,
+            "ds": ds_values,
+            "level": levels,
+            "charts": charts,
+            "basic_info": {
+                "artist": song.get("artist", ""),
+                "genre": song.get("genre", ""),
+                "bpm": song.get("bpm", 0),
+                "from": song.get("version", ""),
+                "is_new": False,
+            },
+        }
+    )
+
+
 class MaiMusic:
     def __init__(self) -> None:
         self.total_list: MusicList = MusicList()
@@ -136,7 +182,7 @@ class MaiMusic:
                     res[lv][ds].append(entry)
         return res
 
-    async def get_music(self) -> None:
+    async def get_music(self) -> bool:
         log.info("开始拉取双数据源进行强同步合流...")
         lxns_music: List[Dict] = []
         fish_music: List[Dict] = []
@@ -144,18 +190,19 @@ class MaiMusic:
         fish_aliases: Dict[str, List[str]] = {}
 
         async with httpx.AsyncClient(timeout=30) as client:
-            if maiconfig.lxnstoken:
-                try:
-                    headers = {"Authorization": maiconfig.lxnstoken}
-                    res = await client.get("https://maimai.lxns.net/api/v0/maimai/song/list", headers=headers)
-                    if res.status_code == 200:
-                        res_json = res.json()
-                        if isinstance(res_json, dict) and "data" in res_json:
-                            lxns_music = res_json["data"]
-                        elif isinstance(res_json, list):
-                            lxns_music = res_json
-                except Exception as e:
-                    log.error(f"同步拉取落雪数据源发生异常: {e}")
+            try:
+                # LXNS 的曲目列表是公共 API；Token 只作为可选请求头，不能
+                # 因为未配置 Token 就跳过这个数据源。
+                headers = {"Authorization": maiconfig.lxnstoken} if maiconfig.lxnstoken else {}
+                res = await client.get("https://maimai.lxns.net/api/v0/maimai/song/list", headers=headers)
+                if res.status_code == 200:
+                    res_json = res.json()
+                    if isinstance(res_json, dict):
+                        lxns_music = res_json.get("songs") or res_json.get("data") or []
+                    elif isinstance(res_json, list):
+                        lxns_music = res_json
+            except Exception as e:
+                log.error(f"同步拉取落雪数据源发生异常: {e}")
 
             # 落雪别名端点是公共 API，无需 token，始终拉取
             try:
@@ -183,9 +230,40 @@ class MaiMusic:
             except Exception as e:
                 log.error(f"同步拉取水鱼数据源发生异常: {e}")
 
+        local_alias_file = static / "common" / "music_alias.json"
         if not fish_music and not lxns_music:
-            log.error("双路数据源全部同步失败！正在紧急维持本地历史缓存资产。")
-            return
+            log.error("双路数据源全部同步失败！正在回退本地历史缓存资产。")
+            try:
+                async with aiofiles.open(music_file, "r", encoding="utf-8") as f:
+                    cached_music = json.loads(await f.read())
+                if not isinstance(cached_music, list):
+                    raise ValueError("本地歌曲缓存格式错误")
+                self.total_list = MusicList(
+                    Music(item) for item in cached_music if isinstance(item, dict)
+                )
+                self.guess_data = [
+                    music for music in self.total_list
+                    if music.get("id") is not None and music.get("title")
+                ]
+
+                async with aiofiles.open(local_alias_file, "r", encoding="utf-8") as f:
+                    cached_aliases = json.loads(await f.read())
+                self.total_alias_list = {
+                    str(item.get("SongID")): [
+                        str(alias).strip().lower()
+                        for alias in item.get("Alias", [])
+                        if str(alias).strip()
+                    ]
+                    for item in cached_aliases
+                    if isinstance(item, dict) and item.get("SongID") is not None
+                }
+                log.warning(
+                    f"已回退本地歌曲/别名缓存：歌曲 {len(self.total_list)} 首，"
+                    f"别名记录 {len(self.total_alias_list)} 条"
+                )
+            except Exception as e:
+                log.error(f"本地歌曲缓存回退失败：{e}")
+            return False
 
         combined_music = {}
         for m in fish_music:
@@ -196,13 +274,26 @@ class MaiMusic:
             if isinstance(m, dict) and 'id' in m:
                 sid = str(m['id'])
                 if sid not in combined_music:
-                    combined_music[sid] = Music(m)
+                    combined_music[sid] = _normalize_lxns_song(m)
 
         self.total_list = MusicList(combined_music.values())
+        self.total_alias_list = {}
+        self.guess_data = [
+            music for music in self.total_list
+            if music.get("id") is not None and music.get("title")
+        ]
 
         all_sids = set(lxns_aliases.keys()) | set(fish_aliases.keys()) | set(combined_music.keys())
         for sid in all_sids:
-            lx_list = lxns_aliases.get(sid, [])
+            numeric_sid = int(sid) if sid.isdigit() else None
+            related_lxns_ids = {sid}
+            if numeric_sid is not None and numeric_sid >= 10000:
+                related_lxns_ids.add(str(numeric_sid - 10000))
+            lx_list = [
+                alias
+                for related_sid in related_lxns_ids
+                for alias in lxns_aliases.get(related_sid, [])
+            ]
             fi_list = fish_aliases.get(sid, [])
             
             merged_set = set()
@@ -218,7 +309,6 @@ class MaiMusic:
             self.total_alias_list[sid] = list(merged_set)
 
         # 加载本地 music_alias.json 作为基础，再用 API 数据补充
-        local_alias_file = static / 'common' / 'music_alias.json'
         local_aliases_loaded = 0
         try:
             async with aiofiles.open(local_alias_file, 'r', encoding='utf-8') as f:
@@ -259,6 +349,7 @@ class MaiMusic:
             pass
 
         asyncio.create_task(self.download_missing_covers())
+        return True
 
     async def download_missing_covers(self):
         """
@@ -318,37 +409,120 @@ async def update_daily():
     await mai.get_music()
 
 async def update_local_alias(*args, **kwargs):
-    log.info("检测到老版本别名系统更新请求，已重定向至最新双源强同步通道...")
-    await mai.get_music()
+    song_id = str(args[0]) if args else str(kwargs.get("song_id", ""))
+    alias_name = str(args[1]).strip() if len(args) > 1 else str(kwargs.get("alias_name", "")).strip()
+    if not song_id or not alias_name:
+        return False
+
+    local_alias_file = static / "common" / "music_alias.json"
+    local_alias_file.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        async with aiofiles.open(local_alias_file, "r", encoding="utf-8") as f:
+            entries = json.loads(await f.read())
+    except (FileNotFoundError, json.JSONDecodeError):
+        entries = []
+
+    entry = next((item for item in entries if str(item.get("SongID")) == song_id), None)
+    if entry is None:
+        entry = {"SongID": int(song_id), "Name": "", "Alias": []}
+        entries.append(entry)
+    aliases = entry.setdefault("Alias", [])
+    if alias_name.lower() not in {str(item).lower() for item in aliases}:
+        aliases.append(alias_name)
+    current = mai.total_alias_list.setdefault(song_id, [])
+    if alias_name.lower() not in {str(item).lower() for item in current}:
+        current.append(alias_name.lower())
+
+    async with aiofiles.open(local_alias_file, "w", encoding="utf-8") as f:
+        await f.write(json.dumps(entries, ensure_ascii=False, indent=2))
+    log.info(f"本地别名已保存：song_id={song_id}")
     return True
 
+@dataclass
+class GuessGame:
+    music: Music
+    answer: set[str]
+    options: List[str]
+    img: Any
+    pic: bool = False
+    end: bool = False
+
+
 class Guess:
-    Group: Dict[str, Dict[str, Any]] = {}
+    Group: Dict[str, GuessGame] = {}
 
     def __init__(self) -> None:
+        self.disabled: set[str] = set()
         if guess_file.exists():
-            self.config = [line.strip() for line in guess_file.read_text(encoding='utf-8').split('\n') if line.strip()]
-        else:
-            self.config = []
+            for line in guess_file.read_text(encoding='utf-8').splitlines():
+                line = line.strip()
+                if line.startswith("disabled:"):
+                    self.disabled.add(line.removeprefix("disabled:"))
 
-    def add(self, gid: str):
-        if gid not in self.config:
-            self.config.append(gid)
-            guess_file.write_text('\n'.join(self.config), encoding='utf-8')
+        class _Switch:
+            enable: set[str] = set()
 
-    def remove(self, gid: str):
-        if gid in self.config:
-            self.config.remove(gid)
-            guess_file.write_text('\n'.join(self.config), encoding='utf-8')
+        self.switch = _Switch()
 
-    def start(self, gid: str, music: Any, cycle: int = 0):
-        self.Group[gid] = {
-            'music': music,
-            'cycle': cycle
-        }
+    def _persist(self) -> None:
+        guess_file.parent.mkdir(parents=True, exist_ok=True)
+        guess_file.write_text(
+            "\n".join(f"disabled:{gid}" for gid in sorted(self.disabled)),
+            encoding="utf-8",
+        )
+
+    def is_enabled(self, gid: str | int) -> bool:
+        return str(gid) not in self.disabled
+
+    def _pick_music(self) -> Optional[Music]:
+        candidates = mai.guess_data or mai.total_list
+        candidates = [music for music in candidates if music.get("id") and music.get("title")]
+        return random.choice(candidates) if candidates else None
+
+    def _build_game(self, music: Music, *, pic: bool = False) -> GuessGame:
+        basic = music.get("basic_info", {}) or {}
+        aliases = mai.total_alias_list.get(str(music.get("id")), [])
+        answer = {str(music.get("id")), str(music.get("title", "")).lower()}
+        answer.update(str(alias).lower() for alias in aliases if alias)
+        levels = "、".join(str(item) for item in music.get("level", [])[:5]) or "未知"
+        options = [
+            f"曲面类型：{music.get('type', '未知')}",
+            f"曲师：{basic.get('artist', music.get('artist', '未知'))}",
+            f"分类：{basic.get('genre', music.get('genre', '未知'))}",
+            f"BPM：{basic.get('bpm', music.get('bpm', '未知'))}",
+            f"收录版本：{basic.get('from', music.get('version', '未知'))}",
+            f"难度：{levels}",
+        ]
+        return GuessGame(
+            music=music,
+            answer=answer,
+            options=options,
+            img=music_picture(music.get("id")),
+            pic=pic,
+        )
+
+    def start(self, gid: str | int, music: Any = None, cycle: int = 0, pic: bool = False):
+        selected = music or self._pick_music()
+        if selected is None:
+            return False
+        self.Group[str(gid)] = self._build_game(selected, pic=pic)
+        return True
+
+    def startpic(self, gid: str | int):
+        return self.start(gid, pic=True)
 
     def end(self, gid: str):
-        if gid in self.Group:
-            del self.Group[gid]
+        self.Group.pop(str(gid), None)
+
+    async def on(self, gid: str | int) -> str:
+        self.disabled.discard(str(gid))
+        self._persist()
+        return "已开启本群猜歌功能"
+
+    async def off(self, gid: str | int) -> str:
+        self.end(str(gid))
+        self.disabled.add(str(gid))
+        self._persist()
+        return "已关闭本群猜歌功能"
 
 guess = Guess()

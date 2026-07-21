@@ -7,6 +7,8 @@ from textwrap import dedent
 from loguru import logger as log
 from nonebot import on_command, on_regex
 from nonebot.adapters.onebot.v11 import (
+    GROUP_ADMIN,
+    GROUP_OWNER,
     GroupMessageEvent,
     Message,
     MessageEvent,
@@ -23,30 +25,44 @@ from ..libraries.maimaidx_error import ServerError
 from ..libraries.maimaidx_model import Alias
 from ..libraries.maimaidx_music import mai, update_local_alias
 
-update_alias        = on_command('更新别名库', permission=SUPERUSER)
-alias_local_apply   = on_command('添加本地别名', aliases={'添加本地别称'})
+update_alias        = on_command('更新别名库', permission=SUPERUSER | GROUP_OWNER | GROUP_ADMIN)
+alias_local_apply   = on_command(
+    '添加本地别名',
+    aliases={'添加本地别称'},
+    permission=SUPERUSER | GROUP_OWNER | GROUP_ADMIN,
+)
 alias_song          = on_regex(r'^(id)?\s?(.+)\s?有什么别[名称]$', re.IGNORECASE)
 
 
 @update_alias.handle()
-async def _(event: PrivateMessageEvent):
+async def _(event: MessageEvent):
     try:
-        await mai.get_music()
+        updated = await mai.get_music()
+        if not updated:
+            await update_alias.finish(
+                '双数据源暂时不可达，已保留本地歌曲和别名缓存，请稍后重试',
+                reply_message=True,
+            )
         log.info('手动更新别名库成功')
-        await update_alias.send('手动更新别名库成功')
+        await update_alias.finish('双数据源别名库更新成功', reply_message=True)
     except Exception as e:
         log.error(f'手动更新别名库失败: {e}')
-        await update_alias.send('手动更新别名库失败')
+        await update_alias.finish('双数据源别名库更新失败，请查看日志', reply_message=True)
 
 
 @alias_local_apply.handle()
 async def _(event: MessageEvent, message: Message = CommandArg()):
     args = message.extract_plain_text().strip().split()
     if len(args) != 2:
-        await alias_local_apply.finish('参数错误', reply_message=True)
+        await alias_local_apply.finish('用法：添加本地别名 歌曲ID 别名', reply_message=True)
     song_id, alias_name = args
+    if not song_id.isdigit():
+        await alias_local_apply.finish('歌曲ID必须是数字', reply_message=True)
     if not mai.total_list.by_id(song_id):
-        await alias_local_apply.finish(f'未找到ID「{song_id}」的曲目', reply_message=True)
+        await alias_local_apply.finish(
+            f'未找到ID「{song_id}」的曲目，请先发送 更新别名库',
+            reply_message=True,
+        )
 
     local_exist = mai.total_alias_list.get(song_id)
     if local_exist and alias_name.lower() in local_exist:
@@ -57,7 +73,7 @@ async def _(event: MessageEvent, message: Message = CommandArg()):
         msg = '添加本地别名失败'
     else:
         msg = f'已成功为ID「{song_id}」添加别名「{alias_name}」到本地别名库'
-    await alias_local_apply.send(msg, reply_message=True)
+    await alias_local_apply.finish(msg, reply_message=True)
 
 
 @alias_song.handle()

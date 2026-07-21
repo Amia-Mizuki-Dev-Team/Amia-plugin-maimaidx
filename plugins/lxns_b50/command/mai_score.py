@@ -17,7 +17,7 @@ from ..libraries.maimaidx_error import UserNotBindLXNSError, UserNotBindFishErro
 from ..libraries.maimaidx_music import mai
 from ..libraries.maimaidx_api_data import is_official_bot
 from ..dependencies import build_markdown_segment as _build_markdown_segment
-from ..dependencies import get_real_qq
+from ..dependencies import get_at_user_id, get_real_qq
 
 try:
     from ..libraries.maimaidx_player_score import music_global_data, player_score_data, score_line_data
@@ -39,8 +39,10 @@ score = on_command('分数线')
 
 def get_at_qq(message: MessageEvent) -> Optional[int]:
     for item in message.message:
-        if isinstance(item, MessageSegment) and item.type == 'at' and item.data['qq'] != 'all':
-            return int(item.data['qq'])
+        if isinstance(item, MessageSegment):
+            target = get_at_user_id(item)
+            if target is not None:
+                return target
     return None
 
 def _search_music(name: str) -> Optional[Any]:

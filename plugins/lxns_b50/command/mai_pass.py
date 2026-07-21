@@ -14,7 +14,7 @@ from nonebot.adapters.onebot.v11 import Bot, Message, MessageEvent, MessageSegme
 from nonebot.exception import FinishedException
 from nonebot.params import CommandArg, Depends
 
-from ..dependencies import build_markdown_segment as _build_markdown_segment, get_real_qq
+from ..dependencies import build_markdown_segment as _build_markdown_segment, get_at_user_id, get_real_qq
 
 from ..libraries.maimaidx_api_data import LXNS_BASE, is_official_bot, maiApi
 from ..libraries.maimaidx_pass import DrawPass, get_chara_id_by_name
@@ -97,8 +97,9 @@ _BACKGROUND_ORDER = (
 
 def get_at_qq(message: MessageEvent) -> Optional[int]:
     for item in message.message:
-        if item.type == "at" and item.data["qq"] != "all":
-            return int(item.data["qq"])
+        target = get_at_user_id(item)
+        if target is not None:
+            return target
     return None
 
 

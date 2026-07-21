@@ -1,9 +1,11 @@
 import re
 
 from nonebot import on_fullmatch, on_regex
-from nonebot.adapters.onebot.v11 import MessageEvent, PrivateMessageEvent
+from nonebot.adapters.onebot.v11 import MessageEvent, MessageSegment, PrivateMessageEvent
 from nonebot.params import Depends, RegexMatched
 from nonebot.permission import SUPERUSER
+
+from ..dependencies import get_at_user_id
 
 from ..libraries.maimaidx_music_info import *
 from ..libraries.maimaidx_player_score import *
@@ -22,8 +24,10 @@ level_achievement_list  = on_regex(r'^([0-9]+\.?[0-9]?\+?)\s?分数列表\s?([0-
 
 def get_at_qq(message: MessageEvent) -> Optional[int]:
     for item in message.message:
-        if isinstance(item, MessageSegment) and item.type == 'at' and item.data['qq'] != 'all':
-            return int(item.data['qq'])
+        if isinstance(item, MessageSegment):
+            target = get_at_user_id(item)
+            if target is not None:
+                return target
     return None
 
 

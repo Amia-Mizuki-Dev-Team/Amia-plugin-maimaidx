@@ -52,9 +52,46 @@ def build_markdown_segment(content: str, buttons_config=None) -> MessageSegment:
     if buttons_config:
         rows = []
         for row in buttons_config:
-            rows.append({"buttons": [_normalize_button(button) for button in row]})
+            normalized = []
+            for button in row:
+                item = _normalize_button(button)
+                render_data = item.setdefault("render_data", {})
+                label = render_data.setdefault("label", button.get("label", "按钮"))
+                render_data.setdefault("visited_label", label)
+                render_data.setdefault("style", 1)
+
+                action = item.setdefault("action", {})
+                if "data" in button:
+                    action.setdefault("data", button["data"])
+                action.setdefault("type", 2)
+                permission = action.setdefault("permission", {})
+                permission.setdefault("type", 2)
+                action.setdefault("data", "")
+                action.setdefault("unsupport_tips", "请更新客户端以查看按钮")
+                if action["type"] == 2:
+                    action.setdefault("reply", False)
+                    action.setdefault("enter", False)
+                    action.setdefault("anchor", 0)
+                elif action["type"] == 0:
+                    action["enter"] = True
+                    action.pop("reply", None)
+                item.setdefault("id", f"btn_{hash(label) & 0xffff}")
+                normalized.append(item)
+            rows.append({"buttons": normalized})
         data["keyboard"] = {"content": {"rows": rows}}
     return MessageSegment(type="markdown", data={"data": data})
+
+
+def get_at_user_id(segment: MessageSegment, bot_id: int | str | None = None) -> int | None:
+    """Read a native @ segment from legacy OneBot and Gensokyo v008."""
+
+    if segment.type != "at":
+        return None
+    data = segment.data or {}
+    raw = data.get("qq") or data.get("user_id") or data.get("id")
+    if raw is None or str(raw).lower() == "all" or (bot_id is not None and str(raw) == str(bot_id)):
+        return None
+    return int(raw) if str(raw).isdigit() else None
 
 
 get_real_qq = qbind.get_real_qq

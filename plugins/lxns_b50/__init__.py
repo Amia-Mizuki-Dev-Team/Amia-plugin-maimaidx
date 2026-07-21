@@ -19,7 +19,7 @@ from .providers import register_provider
 
 # The provider is usable before network-backed song data is ready.  Register
 # it during plugin import so dependent plugins can resolve the contract after
-# require("lxns_b50") and receive safe empty results until startup completes.
+# require("Amia-plugin-maimaidx") and receive safe empty results until startup completes.
 register_provider()
 
 # 注册并拉取定时计划任务组件
@@ -84,7 +84,7 @@ async def get_music():
     
     # ==========================================
     # 加载 musicDB.json 缓存（落雪官方 song_id 权威列表）
-    # 存放在插件目录 lxns_b50/mai_sync_data/musicDB.json
+    # 存放在插件目录 Amia-plugin-maimaidx/mai_sync_data/musicDB.json
     # 双源同步时自动生成，每日凌晨 04:00 自动更新
     # ==========================================
     if music_db_path.exists():
