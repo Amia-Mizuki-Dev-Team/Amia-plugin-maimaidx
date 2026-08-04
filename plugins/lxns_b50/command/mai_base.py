@@ -13,7 +13,7 @@ from ..libraries.maimaidx_api_data import maiApi, user_source_route, maiconfig, 
 from ..dependencies import build_markdown_segment as _build_markdown_segment, get_real_qq
 from PIL import Image, ImageDraw, ImageFont
 from ..config import SIYUAN
-from src.plugins.amia_core.release010 import send_error_with_diagnostic
+from ..release010_import import send_error_with_diagnostic
 
 # 指令注册总览
 maimaidxhelp = on_command('mai帮助', aliases={'帮助maimaiDX', '帮助maimaidx'}, priority=5, block=True)

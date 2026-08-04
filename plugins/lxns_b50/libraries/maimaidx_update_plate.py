@@ -6,7 +6,7 @@ import aiofiles
 from .image import tricolor_gradient
 from .maimaidx_best_50 import *
 from .maimaidx_music import Music, mai
-from src.plugins.amia_core.release010 import format_user_error
+from ..release010_import import format_user_error
 
 
 async def update_rating_table() -> str:

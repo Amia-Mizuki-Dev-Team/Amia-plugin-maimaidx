@@ -5,15 +5,17 @@ import unittest
 from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1] / "plugins" / "lxns_b50"
-if str(PLUGIN_ROOT) not in sys.path:
-    sys.path.insert(0, str(PLUGIN_ROOT))
+LIBRARIES_ROOT = PLUGIN_ROOT / "libraries"
+for path in (PLUGIN_ROOT, LIBRARIES_ROOT):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
 
-from libraries.maimaidx_error import (  # noqa: E402
+from maimaidx_error import (  # noqa: E402
     TokenNotFoundError,
     UserNotBindLXNSError,
     UserNotFoundError,
 )
-from src.plugins.amia_core.release010 import format_user_error  # noqa: E402
+from release010_import import format_user_error  # noqa: E402
 
 
 class Release010MaimaiErrorTests(unittest.TestCase):

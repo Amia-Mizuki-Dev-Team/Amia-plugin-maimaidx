@@ -15,7 +15,7 @@ from .maimaidx_api_data import maiApi
 from .maimaidx_error import *
 from .maimaidx_model import ChartInfo, PlayInfoDefault, PlayInfoDev, UserInfo
 from .maimaidx_music import mai
-from src.plugins.amia_core.release010 import format_user_error
+from ..release010_import import format_user_error
 
 class ScoreBaseImage:
     

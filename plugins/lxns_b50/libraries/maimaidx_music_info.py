@@ -4,7 +4,7 @@ from .image import rounded_corners
 from .maimaidx_best_50 import *
 from .maimaidx_error import UserNotFoundError, UserDisabledQueryError, UserNotExistsError, MusicNotPlayError
 from .maimaidx_music import Music, mai
-from src.plugins.amia_core.release010 import format_user_error
+from ..release010_import import format_user_error
 
 
 def newbestscore(song_id: str, lv: int, value: int, bestlist: List[ChartInfo]) -> int:

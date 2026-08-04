@@ -20,7 +20,7 @@ from ..libraries.maimaidx_api_data import LXNS_BASE, is_official_bot, maiApi
 from ..libraries.maimaidx_pass import DrawPass, get_chara_id_by_name
 from ..libraries.tool import render_html_card_to_base64
 from ..config import static
-from src.plugins.amia_core.release010 import send_error_with_diagnostic
+from ..release010_import import send_error_with_diagnostic
 
 dxpass = on_command("dxpass", aliases={"dxpass", "pass", "名片", "生成名片", "金卡"})
 dxpass_confirm = on_command("dxpass-confirm", aliases={"dxpass_confirm"})

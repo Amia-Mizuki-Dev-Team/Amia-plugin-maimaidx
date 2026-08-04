@@ -17,7 +17,7 @@ from ..libraries.maimaidx_error import UserNotBindLXNSError, UserNotBindFishErro
 from ..libraries.maimaidx_music import mai
 from ..libraries.maimaidx_api_data import is_official_bot
 from ..dependencies import get_at_user_id, get_real_qq
-from src.plugins.amia_core.release010 import (
+from ..release010_import import (
     format_user_error,
     send_error_with_diagnostic,
 )

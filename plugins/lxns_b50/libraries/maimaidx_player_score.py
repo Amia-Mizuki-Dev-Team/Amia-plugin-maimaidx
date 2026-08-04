@@ -18,7 +18,7 @@ from .maimaidx_model import ChartInfo, PlanInfo, PlayInfoDefault, PlayInfoDev, R
 from .maimaidx_music import Music, mai
 from .maimaidx_music_info import draw_music_info
 from .tool import run_chrome_to_base64
-from src.plugins.amia_core.release010 import format_user_error
+from ..release010_import import format_user_error
 
 @dataclass
 class RiseScore:
