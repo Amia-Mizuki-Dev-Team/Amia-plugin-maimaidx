@@ -18,6 +18,7 @@ from .maimaidx_model import ChartInfo, PlanInfo, PlayInfoDefault, PlayInfoDev, R
 from .maimaidx_music import Music, mai
 from .maimaidx_music_info import draw_music_info
 from .tool import run_chrome_to_base64
+from src.plugins.amia_core.release010 import format_user_error
 
 @dataclass
 class RiseScore:
@@ -468,10 +469,10 @@ async def rise_score_data(
         
         msg = MessageSegment.image(image_to_base64(im.crop((200, 0, 1200, height))))
     except (UserNotFoundError, UserNotExistsError, UserDisabledQueryError) as e:
-        msg = str(e)
+        msg = format_user_error(e, "MAI")
     except Exception as e:
         log.error(traceback.format_exc())
-        msg = f'未知错误：{type(e)}\n请联系Bot管理员'
+        msg = format_user_error(e, "MAI")
         
     return msg
 
@@ -530,7 +531,7 @@ async def player_plate_data(
     try:
         verlist = await maiApi.query_user_plate(qqid=qqid, username=username, version=ver)
     except (UserNotFoundError, UserNotExistsError, UserDisabledQueryError) as e:
-        return str(e)
+        return format_user_error(e, "MAI")
     
     if plan in ['将', '者']:
         achievement = 100 if plan == '将' else 80
@@ -756,10 +757,10 @@ async def level_process_data(
         
         msg = MessageSegment.image(image_to_base64(im))
     except (UserNotFoundError, UserNotExistsError, UserDisabledQueryError) as e:
-        msg = str(e)
+        msg = format_user_error(e, "MAI")
     except Exception as e:
         log.error(traceback.format_exc())
-        msg = f'未知错误：{type(e)}\n请联系Bot管理员'
+        msg = format_user_error(e, "MAI")
     return msg
 
 
@@ -824,10 +825,10 @@ async def level_achievement_list_data(
         im = sc.draw_scorelist(rating, newdata, page, end_page_num)
         msg = MessageSegment.image(image_to_base64(im))
     except (UserNotFoundError, UserNotExistsError, UserDisabledQueryError) as e:
-        msg = str(e)
+        msg = format_user_error(e, "MAI")
     except Exception as e:
         log.error(traceback.format_exc())
-        msg = f'未知错误：{type(e)}\n请联系Bot管理员'
+        msg = format_user_error(e, "MAI")
     return msg
 
 
@@ -939,7 +940,7 @@ async def player_score_data(qqid: int, music: Music) -> Union[MessageSegment, st
         data = await draw_music_info(music, qqid)
     except Exception as e:
         log.error(traceback.format_exc())
-        data = f'未知错误：{type(e)}\n请联系Bot管理员'
+        data = format_user_error(e, "MAI")
     return data
 
 
@@ -976,5 +977,5 @@ async def rating_ranking_data(name: Optional[str], page: Optional[int]) -> Union
             data = MessageSegment.image(text_to_bytes_io((msg.strip())))
     except Exception as e:
         log.error(traceback.format_exc())
-        data = f'未知错误：{type(e)}\n请联系Bot管理员'
+        data = format_user_error(e, "MAI")
     return data

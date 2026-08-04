@@ -15,6 +15,7 @@ from .maimaidx_api_data import maiApi
 from .maimaidx_error import *
 from .maimaidx_model import ChartInfo, PlayInfoDefault, PlayInfoDev, UserInfo
 from .maimaidx_music import mai
+from src.plugins.amia_core.release010 import format_user_error
 
 class ScoreBaseImage:
     
@@ -361,8 +362,8 @@ async def generate(qqid: Optional[int] = None, username: Optional[str] = None, i
         draw_best = DrawBest(userinfo, qqid, is_ap)
         msg = MessageSegment.image(image_to_base64(await draw_best.draw()))
     except (UserNotFoundError, UserDisabledQueryError) as e:
-        msg = str(e)
+        msg = format_user_error(e, "MAI")
     except Exception as e:
         log.error(traceback.format_exc())
-        msg = f'未知错误：{type(e)}\n请联系Bot管理员'
+        msg = format_user_error(e, "MAI")
     return msg

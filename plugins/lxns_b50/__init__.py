@@ -47,6 +47,9 @@ __plugin_meta__ = PluginMetadata(
     config=Config,
     supported_adapters={'~onebot.v11'},
     extra={
+        "author": "Amia-Mizuki-Dev-Team",
+        "version": "010",
+        "pmn": {"markdown": True},
         "menu_data": [
             {
                 "func": "Maimai查分",
@@ -63,7 +66,6 @@ __plugin_meta__ = PluginMetadata(
                 "detail_des": "诊断落雪与水鱼绑定状态，支持动态切置全局缺省查分路由"
             }
         ],
-        "menu_template": "default"
     }
 )
 

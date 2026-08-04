@@ -16,8 +16,11 @@ from ..libraries.maimaidx_best_50 import generate
 from ..libraries.maimaidx_error import UserNotBindLXNSError, UserNotBindFishError
 from ..libraries.maimaidx_music import mai
 from ..libraries.maimaidx_api_data import is_official_bot
-from ..dependencies import build_markdown_segment as _build_markdown_segment
 from ..dependencies import get_at_user_id, get_real_qq
+from src.plugins.amia_core.release010 import (
+    format_user_error,
+    send_error_with_diagnostic,
+)
 
 try:
     from ..libraries.maimaidx_player_score import music_global_data, player_score_data, score_line_data
@@ -31,7 +34,7 @@ try:
 except ImportError:
     draw_music_info = None
 
-best50 = on_command('b50', aliases={'B50'})
+best50 = on_command('b50', aliases={'B50', '生成我的B50', '生成B50'})
 ap50 = on_command('ap50', aliases={'AP50'})
 minfo = on_command('minfo', aliases={'minfo', 'Minfo', 'MINFO', 'info', 'Info', 'INFO'})
 ginfo = on_command('ginfo', aliases={'ginfo', 'Ginfo', 'GINFO'})
@@ -92,14 +95,10 @@ async def _(bot: Bot, event: MessageEvent, message: Message = CommandArg(), user
     except FinishedException:
         raise
     except (UserNotBindLXNSError, UserNotBindFishError) as e:
-        error_msg = str(UserNotBindLXNSError(is_official)) if isinstance(e, UserNotBindLXNSError) else str(UserNotBindFishError(is_official))
-        if is_official:
-            await best50.finish(Message(_build_markdown_segment(error_msg)))
-        else:
-            await best50.finish(error_msg, reply_message=True)
-    except Exception:
+        await send_error_with_diagnostic(best50, e, "MAI", context="b50")
+    except Exception as e:
         log.error(f"[b50] 查询遭遇未捕获异常:\n{traceback.format_exc()}")
-        await best50.finish("查询遭遇技术阻塞，请确认输入的账户正确或稍后再试。", reply_message=True)
+        await send_error_with_diagnostic(best50, e, "MAI", context="b50")
 
 @ap50.handle()
 async def _(bot: Bot, event: MessageEvent, message: Message = CommandArg(), user_id: Optional[int] = Depends(get_at_qq)):
@@ -115,14 +114,10 @@ async def _(bot: Bot, event: MessageEvent, message: Message = CommandArg(), user
     except FinishedException:
         raise
     except (UserNotBindLXNSError, UserNotBindFishError) as e:
-        error_msg = str(UserNotBindLXNSError(is_official)) if isinstance(e, UserNotBindLXNSError) else str(UserNotBindFishError(is_official))
-        if is_official:
-            await ap50.finish(Message(_build_markdown_segment(error_msg)))
-        else:
-            await ap50.finish(error_msg, reply_message=True)
-    except Exception:
+        await send_error_with_diagnostic(ap50, e, "MAI", context="ap50")
+    except Exception as e:
         log.error(f"[ap50] 查询遭遇未捕获异常:\n{traceback.format_exc()}")
-        await ap50.finish("查询遭遇技术阻塞，请确认输入的账户正确或稍后再试。", reply_message=True)
+        await send_error_with_diagnostic(ap50, e, "MAI", context="ap50")
 
 @minfo.handle()
 async def _(event: MessageEvent, message: Message = CommandArg(), user_id: Optional[int] = Depends(get_at_qq)):
@@ -148,7 +143,7 @@ async def _(event: MessageEvent, message: Message = CommandArg(), user_id: Optio
     except FinishedException:
         raise
     except Exception as e:
-        await minfo.finish(str(e), reply_message=True)
+        await send_error_with_diagnostic(minfo, e, "MAI", context="minfo")
 
 @ginfo.handle()
 async def _(message: Message = CommandArg()):
@@ -174,10 +169,10 @@ async def _(message: Message = CommandArg()):
     except FinishedException:
         raise
     except ValueError as ve:
-        await ginfo.finish(str(ve), reply_message=True)
-    except Exception:
+        await ginfo.finish(format_user_error(ve, "MAI"), reply_message=True)
+    except Exception as e:
         log.error(f"[ginfo] 全服统计资产渲染失败:\n{traceback.format_exc()}")
-        await ginfo.finish("全服统计资产渲染失败。", reply_message=True)
+        await send_error_with_diagnostic(ginfo, e, "MAI", context="ginfo")
 
 @score.handle()
 async def _(message: Message = CommandArg()):

@@ -4,6 +4,7 @@ from .image import rounded_corners
 from .maimaidx_best_50 import *
 from .maimaidx_error import UserNotFoundError, UserDisabledQueryError, UserNotExistsError, MusicNotPlayError
 from .maimaidx_music import Music, mai
+from src.plugins.amia_core.release010 import format_user_error
 
 
 def newbestscore(song_id: str, lv: int, value: int, bestlist: List[ChartInfo]) -> int:
@@ -246,10 +247,10 @@ async def draw_music_play_data(qqid: int, music_id: str) -> Union[str, MessageSe
         msg = MessageSegment.image(image_to_base64(im))
         
     except (UserNotFoundError, UserNotExistsError, UserDisabledQueryError, MusicNotPlayError) as e:
-        msg = str(e)
+        msg = format_user_error(e, "MAI")
     except Exception as e:
         log.error(traceback.format_exc())
-        msg = f'未知错误：{type(e)}\n请联系Bot管理员'
+        msg = format_user_error(e, "MAI")
     return msg
 
 
@@ -411,10 +412,10 @@ async def draw_rating_table(qqid: int, rating: str, isfc: bool = False) -> Union
         
         msg = MessageSegment.image(image_to_base64(im))
     except (UserNotFoundError, UserNotExistsError, UserDisabledQueryError) as e:
-        msg = str(e)
+        msg = format_user_error(e, "MAI")
     except Exception as e:
         log.error(traceback.format_exc())
-        msg = f'未知错误：{type(e)}\n请联系Bot管理员'
+        msg = format_user_error(e, "MAI")
     return msg
 
 
@@ -611,8 +612,8 @@ async def draw_plate_table(qqid: int, version: str, plan: str) -> Union[MessageS
         
         msg = MessageSegment.image(image_to_base64(im))
     except (UserNotFoundError, UserNotExistsError, UserDisabledQueryError) as e:
-        msg = str(e)
+        msg = format_user_error(e, "MAI")
     except Exception as e:
         log.error(traceback.format_exc())
-        msg = f'未知错误：{type(e)}\n请联系Bot管理员'
+        msg = format_user_error(e, "MAI")
     return msg

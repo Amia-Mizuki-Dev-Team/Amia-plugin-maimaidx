@@ -6,6 +6,7 @@ import aiofiles
 from .image import tricolor_gradient
 from .maimaidx_best_50 import *
 from .maimaidx_music import Music, mai
+from src.plugins.amia_core.release010 import format_user_error
 
 
 async def update_rating_table() -> str:
@@ -104,7 +105,7 @@ async def update_rating_table() -> str:
         return f'定数表更新完成，共耗时{atime}s'
     except Exception as e:
         log.error(traceback.format_exc())
-        return f'定数表更新失败，Error: {e}'
+        return format_user_error(e, "MAI")
 
 
 async def update_plate_table() -> str:
@@ -209,4 +210,4 @@ async def update_plate_table() -> str:
         return f'完成表更新完成'
     except Exception as e:
         log.error(traceback.format_exc())
-        return f'完成表更新失败，Error: {e}'
+        return format_user_error(e, "MAI")

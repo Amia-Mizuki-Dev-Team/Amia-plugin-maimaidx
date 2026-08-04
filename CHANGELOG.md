@@ -1,5 +1,16 @@
 # Changelog
 
+## Release010 compatibility - 2026-08-01
+
+- pinned the PicMenu-compatible metadata path to the Release010 dependency set;
+- imported the official Resource CN1.56 digit assets with four-way staged/atomic sync;
+- preserved the upstream artwork attribution notice;
+- replaced raw exception text with stable `HX-MAI-*` codes and human-readable reasons;
+- added scrubbed diagnostic-file delivery for the main score, recent-record, heatmap,
+  DX Pass, and chart-rendering failure paths;
+- kept Release010 string/array/CQ card, input_notify, stream, and file-segment handling
+  in the shared Amia compatibility helpers.
+
 ## [Unreleased] - 2026-07-21
 
 ### 猜曲绘

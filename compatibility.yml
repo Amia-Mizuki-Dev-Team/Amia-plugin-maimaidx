@@ -1,0 +1,30 @@
+gensokyo:
+  last_verified_release: "010"
+  verified_at: ""
+  baseline_commit: ""
+  modes:
+    string_message:
+      status: unverified
+      evidence: []
+    array_message:
+      status: unverified
+      evidence: []
+    use_uin_true:
+      status: unverified
+      evidence: []
+    use_uin_false:
+      status: unverified
+      evidence: []
+    markdown:
+      status: unverified
+      evidence: []
+    keyboard:
+      status: unverified
+      evidence: []
+    file_segment:
+      status: unverified
+      evidence: []
+  automated_tested: true
+  live_tested: false
+  known_issues:
+    - "真实 Gensokyo 010 账号、数据源 Token 和 QQ 客户端展示尚未在本轮自动化测试中使用。"

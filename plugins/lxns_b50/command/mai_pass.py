@@ -20,8 +20,9 @@ from ..libraries.maimaidx_api_data import LXNS_BASE, is_official_bot, maiApi
 from ..libraries.maimaidx_pass import DrawPass, get_chara_id_by_name
 from ..libraries.tool import render_html_card_to_base64
 from ..config import static
+from src.plugins.amia_core.release010 import send_error_with_diagnostic
 
-dxpass = on_command("dxpass", aliases={"dxpass", "pass", "名片", "金卡"})
+dxpass = on_command("dxpass", aliases={"dxpass", "pass", "名片", "生成名片", "金卡"})
 dxpass_confirm = on_command("dxpass-confirm", aliases={"dxpass_confirm"})
 dxpass_cancel = on_command("dxpass-cancel", aliases={"dxpass_cancel"})
 economy_plugin = require("Amia-plugin-economy")
@@ -451,7 +452,7 @@ async def _(
         raise
     except Exception as e:
         log.error(f"[dxpass] 合成名片遭遇未捕获异常\n{traceback.format_exc()}")
-        await dxpass.finish(f"名片合成失败，原因: {e}", reply_message=True)
+        await send_error_with_diagnostic(dxpass, e, "MAI", context="dxpass")
 
 
 def _pending_token(message: Message) -> str:

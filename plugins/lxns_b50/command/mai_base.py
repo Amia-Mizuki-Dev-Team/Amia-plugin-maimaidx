@@ -13,11 +13,12 @@ from ..libraries.maimaidx_api_data import maiApi, user_source_route, maiconfig, 
 from ..dependencies import build_markdown_segment as _build_markdown_segment, get_real_qq
 from PIL import Image, ImageDraw, ImageFont
 from ..config import SIYUAN
+from src.plugins.amia_core.release010 import send_error_with_diagnostic
 
 # 指令注册总览
 maimaidxhelp = on_command('mai帮助', aliases={'帮助maimaiDX', '帮助maimaidx'}, priority=5, block=True)
 switch_source = on_command('切换数据源')
-user_profile = on_command('mai状态', aliases={'详细信息', 'mai个人中心'})
+user_profile = on_command('mai状态', aliases={'详细信息', 'mai个人中心', '个人状态大盘'})
 render_curve = on_command('mai曲线')
 render_recent = on_command('mai最近', aliases={'mai最近成绩', '最近记录', '最近成绩', 'mai recent'})
 render_heatmap = on_command('mai热度', aliases={'mai热力图', '热力图', 'mai heatmap'})
@@ -184,7 +185,7 @@ async def _(bot: Bot, event: MessageEvent):
         "• `minfo <ID>` : 查询单谱面游玩详情与分数线\n"
         "• `ginfo <ID>` : 查询单谱面全服统计图\n"
         "• `分数线 <ID> <达成率>` : 查询单谱面达成分数线\n"
-        "• `dxpass [立绘ID/名] [卡框ID] [底板ID]` : 生成金卡名片合成图\n\n"
+        "• `dxpass [立绘ID/名] [卡框ID] [底板ID]` : 生成金卡名片合成图（消耗 200 PC）\n\n"
         "**曲目与检索**\n"
         "• `查歌 <关键词>` : 全局模糊检索歌曲名\n"
         "• `id <曲目ID>` : 调取目标谱面核心底标参数\n"
@@ -205,7 +206,7 @@ async def _(bot: Bot, event: MessageEvent):
         "· minfo <曲目ID> : 查询单曲游玩详情\n"
         "· ginfo <曲目ID> : 查询单曲全服统计图\n"
         "· 分数线 <曲目ID> <达成率> : 查询单曲分数线\n"
-        "· dxpass [立绘ID/名] [卡框ID] [底板ID] : 生成名片大图\n"
+        "· dxpass [立绘ID/名] [卡框ID] [底板ID] : 生成名片大图（消耗 200 PC）\n"
         "· 查歌 <关键词> : 检索歌曲\n"
         "· id <曲目ID> : 查看谱面详细底标\n"
         "· 完成表 / 定数表 : 查看完成表与定数表\n"
@@ -218,11 +219,8 @@ async def _(bot: Bot, event: MessageEvent):
     if is_official_bot(bot.self_id):
         msg_segment = _build_markdown_segment(md_help, [
             [
-                {"id": "b50", "render_data.label": "生成我的 B50", "render_data.style": 1, "action.type": 2, "action.permission.type": 2, "action.data": "b50", "action.enter": True},
-                {"id": "profile", "render_data.label": "个人状态大盘", "render_data.style": 1, "action.type": 2, "action.permission.type": 2, "action.data": "mai状态", "action.enter": True}
-            ],
-            [
-                {"id": "dxpass", "render_data.label": "生成名片", "render_data.style": 1, "action.type": 2, "action.permission.type": 2, "action.data": "dxpass", "action.enter": True}
+                {"id": "b50", "render_data.label": "生成我的 B50", "render_data.style": 1, "action.type": 2, "action.permission.type": 2, "action.data": "生成我的B50", "action.enter": True},
+                {"id": "profile", "render_data.label": "个人状态大盘", "render_data.style": 1, "action.type": 2, "action.permission.type": 2, "action.data": "个人状态大盘", "action.enter": True}
             ],
             [
                 {"id": "to_lx", "render_data.label": "默认切至落雪", "render_data.style": 2, "action.type": 2, "action.permission.type": 2, "action.data": "切换数据源 落雪", "action.enter": True},
@@ -312,9 +310,9 @@ async def _(bot: Bot, event: MessageEvent):
         await render_curve.finish(MessageSegment.image(_draw_rating_curve(curves)), reply_message=True)
     except FinishedException:
         raise
-    except Exception:
+    except Exception as e:
         log.exception("mai曲线 渲染失败")
-        await render_curve.finish("Rating 曲线渲染失败，请稍后重试。", reply_message=True)
+        await send_error_with_diagnostic(render_curve, e, "MAI", context="mai曲线")
 
 
 @render_recent.handle()
@@ -363,7 +361,7 @@ async def _(bot: Bot, event: MessageEvent):
         raise
     except Exception as e:
         log.exception("[mai最近] 查询失败")
-        await render_recent.finish(f"查询最近记录失败: {type(e).__name__}", reply_message=True)
+        await send_error_with_diagnostic(render_recent, e, "MAI", context="mai最近")
  
  
 @render_heatmap.handle()
@@ -411,4 +409,4 @@ async def _(bot: Bot, event: MessageEvent):
         raise
     except Exception as e:
         log.exception("[mai热度] 查询失败")
-        await render_heatmap.finish(f"查询热力图失败: {type(e).__name__}", reply_message=True)
+        await send_error_with_diagnostic(render_heatmap, e, "MAI", context="mai热度")
