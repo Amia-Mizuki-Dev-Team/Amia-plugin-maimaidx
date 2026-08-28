@@ -1,9 +1,24 @@
+import os
 import uuid
 from pathlib import Path
 from typing import Dict, List, Optional
 from loguru import logger as log
 from nonebot import get_driver, get_plugin_config
 from pydantic import BaseModel, Field, AliasChoices
+from dotenv import load_dotenv, find_dotenv
+
+# NoneBot 的 .env 只进 driver.config 不进 os.environ；显式注入供 os.getenv 兜底读取。
+# override=False：进程真实环境变量（systemd/harness 级）优先于 .env 文件值。
+load_dotenv(find_dotenv(usecwd=True), override=False)
+
+
+def _oauth_env_fallback(*names: str) -> str:
+    for name in names:
+        value = os.getenv(name, "").strip()
+        if value:
+            return value
+    return ""
+
 
 driver = get_driver()
 
@@ -30,8 +45,12 @@ class Config(BaseModel):
     # Diving-Fish OAuth application already configured for maimai_sync.  Both
     # plugins share the OAuth binding store, so reusing one client id keeps
     # subject refs and consent rows consistent across the ecosystem.
+    # 双通道兑底：AliasChoices 走 driver.config；default_factory 走 os.getenv
+    # （覆盖 driver.config 缺键/加载异常硬兑底 Config() 的场景）。
     diving_fish_oauth_client_id: str = Field(
-        default="",
+        default_factory=lambda: _oauth_env_fallback(
+            "DIVING_FISH_OAUTH_CLIENT_ID", "FISH_CLIENT_ID"
+        ),
         validation_alias=AliasChoices(
             "diving_fish_oauth_client_id",
             "DIVING_FISH_OAUTH_CLIENT_ID",
@@ -40,7 +59,9 @@ class Config(BaseModel):
         ),
     )
     diving_fish_oauth_client_secret: str = Field(
-        default="",
+        default_factory=lambda: _oauth_env_fallback(
+            "DIVING_FISH_OAUTH_CLIENT_SECRET", "FISH_CLIENT_SECRET"
+        ),
         validation_alias=AliasChoices(
             "diving_fish_oauth_client_secret",
             "DIVING_FISH_OAUTH_CLIENT_SECRET",

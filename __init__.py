@@ -80,6 +80,11 @@ async def get_music():
     """
     # 初始化开放平台 Token 加载
     maiApi.load_token_proxy()
+    # 启动诊断：水鱼 OAuth 双通道兑底是否生效（仅回显 client_id 尾 4 位，脱敏）
+    log.info(
+        f"[maimaidx] DivingFish OAuth configured={maiApi.oauth_configured}, "
+        f"client_id=****{maiconfig.diving_fish_oauth_client_id[-4:] if maiconfig.diving_fish_oauth_client_id else 'EMPTY'}"
+    )
     log.info(f"MaimaiDX 数据服务总闸启动就绪。当前系统环境指配全局缺省路由为: [ {maiconfig.prober_source} ]")
     
     # 触发双源聚合全量同步（同时向落雪与水鱼拉取歌曲/别名，增量同步曲绘）
