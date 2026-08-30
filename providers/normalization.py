@@ -65,3 +65,39 @@ def catalog_song_id(raw_song_id: object, chart_type: str) -> int | None:
     source = "fish" if chart_type == "dx" and 10000 < value < 20000 else "lxns"
     return normalize_song_id(value, source=source, chart_type=chart_type)
 
+
+
+def resolve_qq_id(identity) -> int | None:
+    """Resolve a Core identity into the numeric QQ used by score upstreams.
+
+    优先级：canonical_user_id（amia_core 解析结果）> qbind 绑定映射 >
+    external user_id 直接使用。官方机器人平台的 user_id 是虚拟 id，只能
+    经 qbind 换取真实 QQ；Gensokyo/OneBot 的 user_id 本身就是真实 QQ。
+
+    注意：official_bot_ids 在本插件中用于 markdown 能力判定，默认值包含
+    Gensokyo self_id，绝不能作为身份拒绝依据 —— 否则 Provider 会对所有
+    未注册 identity resolver 的 OneBot 用户静默返回空记录（表现为
+    「没有找到你的游玩记录」而控制台无任何报错）。
+    """
+    from loguru import logger as log
+
+    canonical = identity.canonical_user_id
+    if canonical is not None and str(canonical).isdecimal():
+        return int(canonical)
+    raw_user_id = str(identity.external_key.user_id)
+    try:
+        # 延迟导入：dependencies 会强制加载 maimai_sync/qbind，隔离测试环境下不可用。
+        from ..dependencies import get_real_qq
+        real_qq = get_real_qq(raw_user_id)
+    except Exception:
+        real_qq = None
+    if real_qq and str(real_qq).isdecimal():
+        return int(real_qq)
+    if raw_user_id.isdecimal():
+        return int(raw_user_id)
+    log.warning(
+        "[provider] 身份断点: 无法解析真实 QQ，成绩查询将被拒绝 "
+        f"(canonical={canonical!r} external_user={raw_user_id!r} "
+        f"self_id={identity.external_key.self_id!r})"
+    )
+    return None

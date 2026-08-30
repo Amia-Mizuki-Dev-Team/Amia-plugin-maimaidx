@@ -17,18 +17,7 @@ from ..config import maiconfig
 from ..libraries.maimaidx_api_data import maiApi
 from ..libraries.maimaidx_types import normalize_source
 from ..libraries.maimaidx_music import mai
-from .normalization import catalog_song_id, normalize_chart_type, normalize_song_id
-
-
-def resolve_qq_id(identity) -> int | None:
-    canonical = identity.canonical_user_id
-    if canonical is not None:
-        value = str(canonical)
-        return int(value) if value.isdecimal() else None
-    if str(identity.external_key.self_id) in {str(item) for item in maiconfig.official_bot_ids}:
-        return None
-    raw_user_id = str(identity.external_key.user_id)
-    return int(raw_user_id) if raw_user_id.isdecimal() else None
+from .normalization import catalog_song_id, normalize_chart_type, normalize_song_id, resolve_qq_id
 
 
 def _value(record: object, *names: str, default=None):
