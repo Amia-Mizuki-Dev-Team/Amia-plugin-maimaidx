@@ -49,13 +49,7 @@ async def draw_music_info(
                 player = await maiApi.query_user_b50(qqid=qqid, source=normalize_source(maiconfig.prober_source))
             else:
                 player = user
-            # 增益对比榜按谱面类型选择：DX 曲对比 dx B15，SD 曲对比 sd B35。
-            # 旧实现仅对最新版本曲目启用 dx 分支，导致 BUDDiES/PRiSM 等旧 DX 曲
-            # （如 id 11630「1000年生きてる」）的增益回落到 sd 榜计算。
-            if (
-                str(music.type).lower() in ("dx", "deluxe")
-                or music.basic_info.version == list(plate_to_dx_version.values())[-1]
-            ):
+            if music.basic_info.version == list(plate_to_dx_version.values())[-1]:
                 bestlist = player.charts.dx
                 isfull = bool(len(bestlist) == 15)
             else:
