@@ -79,6 +79,7 @@ qbind = _load_dependency("qbind")
 
 _REQUIRED_SYNC_API = (
     "get_user_bind_async", "save_user_bind", "send_message", "build_message_with_mention",
+    "load_env_layers",
 )
 _missing = [name for name in _REQUIRED_SYNC_API if not hasattr(maimai_sync, name)]
 if _missing:

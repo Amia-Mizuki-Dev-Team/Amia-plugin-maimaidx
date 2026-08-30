@@ -6,7 +6,7 @@ from loguru import logger as log
 from nonebot import get_driver, get_plugin_config
 from pydantic import BaseModel, Field, AliasChoices
 
-from .libraries.env_layering import load_env_layers
+from .dependencies import load_env_layers
 
 load_env_layers("[maimaidx]")
 
