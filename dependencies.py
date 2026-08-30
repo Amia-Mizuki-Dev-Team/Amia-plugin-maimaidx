@@ -79,7 +79,6 @@ qbind = _load_dependency("qbind")
 
 _REQUIRED_SYNC_API = (
     "get_user_bind_async", "save_user_bind", "send_message", "build_message_with_mention",
-    "load_env_layers",
 )
 _missing = [name for name in _REQUIRED_SYNC_API if not hasattr(maimai_sync, name)]
 if _missing:
@@ -87,6 +86,17 @@ if _missing:
 
 for _name in _REQUIRED_SYNC_API:
     globals()[_name] = getattr(maimai_sync, _name)
+
+# 对外公共函数映射层：统一经 maimai_manage 门面取用（Manage → sync 桥接），
+# 禁止跳过 Manage 直挂其他插件的公共实现。分层结果被 config import 期依赖，
+# Manage 不可用时必须显式抛错而非静默降级。
+try:
+    _manage = require("maimai_manage")
+except Exception as exc:
+    raise RuntimeError(f"无法加载 maimai_manage（dotenv 分层映射源）: {exc}") from exc
+load_env_layers = getattr(_manage, "load_env_layers", None)
+if load_env_layers is None:
+    raise RuntimeError("maimai_manage 缺少公共 API: load_env_layers")
 
 # Keep the developer-provided API available to consumers when the installed
 # sync version exports it, without making older compatible versions fail to
