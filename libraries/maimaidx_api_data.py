@@ -41,6 +41,30 @@ def _mask_identity(value: str) -> str:
     return f"QQ {value[:2]}{'*' * max(2, len(value) - 4)}{value[-2:]}"
 
 
+def _log_score_breakpoint(
+    stage: str,
+    detail: str,
+    *,
+    status: int | None = None,
+    qqid: Any = None,
+    username: str | None = None,
+    subject: str | None = None,
+    error: BaseException | None = None,
+) -> None:
+    """无法获取成绩时把断点信息打印到控制台；成功取数的路径保持静默。"""
+    if qqid is not None:
+        identity = f"qq={qqid}"
+    elif username:
+        identity = f"username={username}"
+    else:
+        identity = f"subject={subject or '未知'}"
+    outcome = f"HTTP {status}" if status is not None else "请求未完成"
+    line = f"[{stage}] 成绩获取失败断点: {identity} | {detail} -> {outcome}"
+    if error is not None:
+        line += f" | {type(error).__name__}: {error}"
+    log.error(line)
+
+
 def _chart_info(payload: dict, *, source: SourceName, default_type: str) -> ChartInfo:
     """Normalize the small naming differences between LXNS and Diving-Fish."""
     return ChartInfo(
@@ -245,16 +269,22 @@ class MaiApi:
                         headers=self.headers
                     )
             except httpx.TimeoutException as e:
+                _log_score_breakpoint("rating趋势/落雪", "网络请求超时", qqid=qqid, error=e)
                 raise MaimaiTimeoutError() from e
             except httpx.HTTPError as e:
+                _log_score_breakpoint("rating趋势/落雪", "网络请求失败", qqid=qqid, error=e)
                 raise ServerError() from e
             if profile_res.status_code in {400, 404}:
+                _log_score_breakpoint("rating趋势/落雪资料", f"GET {LXNS_BASE}/maimai/player/qq/{qqid}", status=profile_res.status_code, qqid=qqid)
                 raise UserNotFoundError()
             if profile_res.status_code in {401, 403}:
+                _log_score_breakpoint("rating趋势/落雪资料", f"GET {LXNS_BASE}/maimai/player/qq/{qqid}", status=profile_res.status_code, qqid=qqid)
                 self._raise_lxns_auth_error(profile_res.status_code)
             if profile_res.status_code == 429 or profile_res.status_code >= 500:
+                _log_score_breakpoint("rating趋势/落雪资料", f"GET {LXNS_BASE}/maimai/player/qq/{qqid}", status=profile_res.status_code, qqid=qqid)
                 raise ServerError()
             if profile_res.status_code != 200:
+                _log_score_breakpoint("rating趋势/落雪资料", f"GET {LXNS_BASE}/maimai/player/qq/{qqid}", status=profile_res.status_code, qqid=qqid)
                 raise ServerError()
             try:
                 profile_payload = profile_res.json()
@@ -267,6 +297,7 @@ class MaiApi:
                 raise MaimaiDataFormatError()
             friend_code = pdata.get("friend_code")
             if not friend_code:
+                log.warning(f"[rating趋势/落雪] 断点: qq={qqid} 资料接口没有返回 friend_code")
                 raise UserNotFoundError()
 
             # 用 friend_code 查询 rating 趋势（趋势数据量大，给 60s 超时）
@@ -276,12 +307,16 @@ class MaiApi:
                     headers=self.headers
                 )
             if res.status_code in {400, 404}:
+                _log_score_breakpoint("rating趋势/落雪trend", f"GET {LXNS_BASE}/maimai/player/{friend_code}/trend", status=res.status_code, qqid=qqid)
                 raise UserNotFoundError()
             if res.status_code in {401, 403}:
+                _log_score_breakpoint("rating趋势/落雪trend", f"GET {LXNS_BASE}/maimai/player/{friend_code}/trend", status=res.status_code, qqid=qqid)
                 self._raise_lxns_auth_error(res.status_code)
             if res.status_code == 429 or res.status_code >= 500:
+                _log_score_breakpoint("rating趋势/落雪trend", f"GET {LXNS_BASE}/maimai/player/{friend_code}/trend", status=res.status_code, qqid=qqid)
                 raise ServerError()
             if res.status_code != 200:
+                _log_score_breakpoint("rating趋势/落雪trend", f"GET {LXNS_BASE}/maimai/player/{friend_code}/trend", status=res.status_code, qqid=qqid)
                 raise ServerError()
             try:
                 data = res.json()
@@ -340,14 +375,18 @@ class MaiApi:
                     headers=self.headers
                 )
             if profile_res.status_code in {401, 403}:
+                _log_score_breakpoint("单曲成绩/落雪资料", f"GET {LXNS_BASE}/maimai/player/qq/{qqid}", status=profile_res.status_code, qqid=qqid)
                 self._raise_lxns_auth_error(profile_res.status_code)
             if profile_res.status_code in {404, 400}:
+                _log_score_breakpoint("单曲成绩/落雪资料", f"GET {LXNS_BASE}/maimai/player/qq/{qqid}", status=profile_res.status_code, qqid=qqid)
                 raise UserNotFoundError()
             if profile_res.status_code != 200:
+                _log_score_breakpoint("单曲成绩/落雪资料", f"GET {LXNS_BASE}/maimai/player/qq/{qqid}", status=profile_res.status_code, qqid=qqid)
                 raise ServerError()
             pdata = profile_res.json().get("data", {})
             friend_code = pdata.get("friend_code")
             if not friend_code:
+                log.warning(f"[单曲成绩/落雪] 断点: qq={qqid} 资料接口没有返回 friend_code")
                 return None
 
             async with httpx.AsyncClient(timeout=15) as client:
@@ -357,14 +396,19 @@ class MaiApi:
                     headers=self.headers,
                 )
             if res.status_code == 429:
+                _log_score_breakpoint("单曲成绩/落雪bests", f"GET {LXNS_BASE}/maimai/player/{friend_code}/bests", status=res.status_code, qqid=qqid)
                 raise ServerError()
             if res.status_code in {401, 403}:
+                _log_score_breakpoint("单曲成绩/落雪bests", f"GET {LXNS_BASE}/maimai/player/{friend_code}/bests", status=res.status_code, qqid=qqid)
                 self._raise_lxns_auth_error(res.status_code)
             if res.status_code in {400, 404}:
+                _log_score_breakpoint("单曲成绩/落雪bests", f"GET {LXNS_BASE}/maimai/player/{friend_code}/bests", status=res.status_code, qqid=qqid)
                 raise UserNotFoundError()
             if res.status_code >= 500:
+                _log_score_breakpoint("单曲成绩/落雪bests", f"GET {LXNS_BASE}/maimai/player/{friend_code}/bests", status=res.status_code, qqid=qqid)
                 raise ServerError()
             if res.status_code != 200:
+                _log_score_breakpoint("单曲成绩/落雪bests", f"GET {LXNS_BASE}/maimai/player/{friend_code}/bests", status=res.status_code, qqid=qqid)
                 raise ServerError()
             scores = res.json()
             if isinstance(scores, dict):
@@ -381,8 +425,10 @@ class MaiApi:
         except (MaimaiTimeoutError, TokenNotFoundError, UserDisabledQueryError, UserNotFoundError, ServerError):
             raise
         except (httpx.TimeoutException, TimeoutError) as e:
+            _log_score_breakpoint("单曲成绩/落雪", "网络请求超时", qqid=qqid, error=e)
             raise MaimaiTimeoutError() from e
         except httpx.HTTPError as e:
+            _log_score_breakpoint("单曲成绩/落雪", "网络请求失败", qqid=qqid, error=e)
             raise ServerError() from e
         except Exception as e:
             log.warning(f"落雪单曲成绩查询失败(qqid={qqid}, music_id={music_id}): {e}")
@@ -403,12 +449,15 @@ class MaiApi:
         from .maimaidx_model import UserInfo, Data, ChartInfo
 
         selected = normalize_source(source)
+        stage = "ap50" if is_ap else "b50"
         if is_ap and selected == "diving-fish":
             raise SourceNotSupportedError()
         if selected == "lxns":
             if not maiconfig.lxnstoken:
+                _log_score_breakpoint(f"{stage}/落雪", "LXNS 开发者凭证未配置", qqid=qqid, username=username)
                 raise TokenNotFoundError()
             if not qqid:
+                _log_score_breakpoint(f"{stage}/落雪", "缺少可查询的 QQ 身份", username=username)
                 raise UserNotFoundError(source=selected)
             try:
                 profile = {}
@@ -419,10 +468,13 @@ class MaiApi:
                         headers=self.headers
                     )
                 if profile_res.status_code in {400, 404}:
+                    _log_score_breakpoint(f"{stage}/落雪资料", f"GET {LXNS_BASE}/maimai/player/qq/{qqid}", status=profile_res.status_code, qqid=qqid)
                     raise UserNotFoundError(source=selected)
                 if profile_res.status_code in {401, 403}:
+                    _log_score_breakpoint(f"{stage}/落雪资料", f"GET {LXNS_BASE}/maimai/player/qq/{qqid}", status=profile_res.status_code, qqid=qqid)
                     self._raise_lxns_auth_error(profile_res.status_code)
                 if profile_res.status_code == 429 or profile_res.status_code >= 500:
+                    _log_score_breakpoint(f"{stage}/落雪资料", f"GET {LXNS_BASE}/maimai/player/qq/{qqid}", status=profile_res.status_code, qqid=qqid)
                     raise ServerError()
                 if profile_res.status_code == 200:
                     pdata = profile_res.json().get("data", {})
@@ -430,6 +482,7 @@ class MaiApi:
                     profile = pdata
                 else:
                     friend_code = None
+                    log.warning(f"[{stage}/落雪资料] 断点: qq={qqid} 资料接口返回 HTTP {profile_res.status_code}，改用 QQ 端点查询 bests")
 
                 # AP 查询需要 friend_code 端点（/qq/{qq}/bests/ap 不存在）
                 if is_ap:
@@ -463,17 +516,23 @@ class MaiApi:
                         charts=Data(sd=sd_list[:35], dx=dx_list[:15])
                     )
                 if res.status_code in {400, 404}:
+                        _log_score_breakpoint(f"{stage}/落雪bests", f"GET {endpoint}", status=res.status_code, qqid=qqid)
                         raise UserNotFoundError(source=selected)
                 if res.status_code in {401, 403}:
+                    _log_score_breakpoint(f"{stage}/落雪bests", f"GET {endpoint}", status=res.status_code, qqid=qqid)
                     self._raise_lxns_auth_error(res.status_code)
                 if res.status_code >= 500 or res.status_code == 429:
+                    _log_score_breakpoint(f"{stage}/落雪bests", f"GET {endpoint}", status=res.status_code, qqid=qqid)
                     raise ServerError()
+                _log_score_breakpoint(f"{stage}/落雪bests", f"GET {endpoint}", status=res.status_code, qqid=qqid)
                 raise ServerError()
             except (TokenNotFoundError, UserNotFoundError, UserDisabledQueryError, ServerError):
                 raise
             except (httpx.TimeoutException, TimeoutError) as e:
+                _log_score_breakpoint(f"{stage}/落雪", "网络请求超时", qqid=qqid, error=e)
                 raise MaimaiTimeoutError() from e
             except httpx.HTTPError as e:
+                _log_score_breakpoint(f"{stage}/落雪", "网络请求失败", qqid=qqid, error=e)
                 raise ServerError() from e
             except Exception as e:
                 log.warning(f"落雪 B50 查询失败(qqid={qqid}): {e}")
@@ -493,8 +552,10 @@ class MaiApi:
             try:
                 res = await client.post(f"{FISH_BASE}/query/player", json=body)
             except (httpx.TimeoutException, TimeoutError) as e:
+                _log_score_breakpoint(f"{stage}/水鱼", f"POST {FISH_BASE}/query/player", qqid=qqid, username=username, error=e)
                 raise MaimaiTimeoutError() from e
             except httpx.HTTPError as e:
+                _log_score_breakpoint(f"{stage}/水鱼", f"POST {FISH_BASE}/query/player", qqid=qqid, username=username, error=e)
                 raise ServerError() from e
         if res.status_code == 200:
             raw = res.json()
@@ -513,11 +574,15 @@ class MaiApi:
                 charts=Data(sd=sd_list, dx=dx_list)
             )
         elif res.status_code in {401, 403}:
+            _log_score_breakpoint(f"{stage}/水鱼", f"POST {FISH_BASE}/query/player", status=res.status_code, qqid=qqid, username=username)
             raise UserDisabledQueryError()
         elif res.status_code in {404, 400}:
+                    _log_score_breakpoint(f"{stage}/水鱼", f"POST {FISH_BASE}/query/player", status=res.status_code, qqid=qqid, username=username)
                     raise UserNotFoundError(source=selected)
         elif res.status_code == 429 or res.status_code >= 500:
+            _log_score_breakpoint(f"{stage}/水鱼", f"POST {FISH_BASE}/query/player", status=res.status_code, qqid=qqid, username=username)
             raise ServerError()
+        _log_score_breakpoint(f"{stage}/水鱼", f"POST {FISH_BASE}/query/player", status=res.status_code, qqid=qqid, username=username)
         raise ServerError()
 
     @staticmethod
@@ -579,12 +644,16 @@ class MaiApi:
             "GET", "/player/records", subject, params=filters
         )
         if response.status_code == 400:
+            _log_score_breakpoint("水鱼成绩/OAuth", "GET /player/records", status=response.status_code, subject=subject)
             raise self._bad_request_error(response)
         if response.status_code == 404:
+            _log_score_breakpoint("水鱼成绩/OAuth", "GET /player/records", status=response.status_code, subject=subject)
             raise UserNotFoundError()
         if response.status_code == 410:
+            _log_score_breakpoint("水鱼成绩/OAuth", "GET /player/records", status=response.status_code, subject=subject)
             raise ServerError()
         if response.status_code != 200:
+            _log_score_breakpoint("水鱼成绩/OAuth", "GET /player/records", status=response.status_code, subject=subject)
             raise ServerError()
         try:
             payload = response.json()
@@ -604,20 +673,25 @@ class MaiApi:
         try:
             music_id_value = int(music_id)
         except (TypeError, ValueError) as exc:
+            _log_score_breakpoint("水鱼单曲/OAuth", f"POST /player/record (music_id={music_id})", subject=subject, error=exc)
             raise UserNotFoundError() from exc
         response = await self.oauth.request_api(
             "POST", "/player/record", subject, json={"music_id": music_id_value}
         )
         if response.status_code == 400:
+            _log_score_breakpoint("水鱼单曲/OAuth", "POST /player/record", status=response.status_code, subject=subject)
             raise self._bad_request_error(response)
         if response.status_code == 404:
+            _log_score_breakpoint("水鱼单曲/OAuth", "POST /player/record", status=response.status_code, subject=subject)
             # The subject is already authenticated; a missing single-record
             # resource means this song has not been played, not that the QQ
             # account disappeared.
             raise MusicNotPlayError()
         if response.status_code == 410:
+            _log_score_breakpoint("水鱼单曲/OAuth", "POST /player/record", status=response.status_code, subject=subject)
             raise ServerError()
         if response.status_code != 200:
+            _log_score_breakpoint("水鱼单曲/OAuth", "POST /player/record", status=response.status_code, subject=subject)
             raise ServerError()
         try:
             items = self._record_items(response.json())
@@ -631,12 +705,16 @@ class MaiApi:
             "POST", "/player/plate", subject, json={"version": version}
         )
         if response.status_code == 400:
+            _log_score_breakpoint("水鱼牌子/OAuth", "POST /player/plate", status=response.status_code, subject=subject)
             raise self._bad_request_error(response)
         if response.status_code == 404:
+            _log_score_breakpoint("水鱼牌子/OAuth", "POST /player/plate", status=response.status_code, subject=subject)
             raise UserNotFoundError()
         if response.status_code == 410:
+            _log_score_breakpoint("水鱼牌子/OAuth", "POST /player/plate", status=response.status_code, subject=subject)
             raise ServerError()
         if response.status_code != 200:
+            _log_score_breakpoint("水鱼牌子/OAuth", "POST /player/plate", status=response.status_code, subject=subject)
             raise ServerError()
         try:
             items = self._record_items(response.json())

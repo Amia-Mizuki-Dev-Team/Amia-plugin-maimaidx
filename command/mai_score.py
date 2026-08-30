@@ -140,6 +140,7 @@ async def _(bot: Bot, event: MessageEvent, message: Message = CommandArg(), user
     else:
         qqid = None
     if qqid is None and not username:
+        log.warning(f"[b50] 身份断点: 平台身份未完成 qbind 绑定，无法确定查询对象 sender={event.user_id} at={user_id}")
         await best50.finish(
             "我还没把你的平台身份绑定到真实 QQ，先完成 qbind 绑定后再生成 B50。",
             reply_message=True,
@@ -173,6 +174,7 @@ async def _(bot: Bot, event: MessageEvent, message: Message = CommandArg(), user
     else:
         qqid = None
     if qqid is None and not username:
+        log.warning(f"[ap50] 身份断点: 平台身份未完成 qbind 绑定，无法确定查询对象 sender={event.user_id} at={user_id}")
         await ap50.finish(
             "我还没把你的平台身份绑定到真实 QQ，先完成 qbind 绑定后再生成 AP50。",
             reply_message=True,
@@ -209,6 +211,7 @@ async def _(bot: Bot, event: MessageEvent, message: Message = CommandArg(), user
     if user_id is not None and str(user_id).isdigit() and not real_qq_str:
         real_qq_str = str(user_id)
     if not real_qq_str or not str(real_qq_str).isdigit():
+        log.warning(f"[minfo] 身份断点: 平台身份未完成 qbind 绑定，无法确定查询对象 sender={event.user_id} at={user_id}")
         await minfo.finish(
             '我还没把你的平台身份绑定到真实 QQ，先完成 qbind 绑定后再查询单曲成绩。',
             reply_message=True,
@@ -232,6 +235,7 @@ async def _(bot: Bot, event: MessageEvent, message: Message = CommandArg(), user
     except FinishedException:
         raise
     except OAuthConsentRequiredError:
+        log.warning(f"[minfo] 成绩获取失败断点: qq={qqid} 水鱼 OAuth 尚未授权 (OAuthConsentRequiredError)")
         if user_id is not None:
             await minfo.finish(
                 "指定玩家还没有授权水鱼，请让对方本人发送「水鱼授权」。",

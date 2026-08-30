@@ -19,6 +19,10 @@ import logging
 from typing import Any
 from uuid import uuid4
 
+# NoneBot 控制台输出走 loguru sink，标准库 logging 不保证可见；
+# 成绩获取失败的断点日志必须到达控制台，因此这里使用 loguru。
+from loguru import logger as _console_log
+
 
 def _load_shared_helpers():
     for module_name in ("amia_core.release010", "src.plugins.amia_core.release010"):
@@ -316,6 +320,7 @@ async def send_error_with_diagnostic(
     # Expected input/permission states never create a diagnostic file and do
     # not expose an internal HX code in chat.
     if getattr(exc, "user_expected", False):
+        _console_log.warning(f"[{context or 'maimaidx'}] 成绩获取失败断点(用户态): {type(exc).__name__}: {exc}")
         try:
             await matcher.finish(format_user_error(exc, source, include_code=False), reply_message=True)
         except Exception as error:  # noqa: BLE001 - the channel may already be down
@@ -328,6 +333,7 @@ async def send_error_with_diagnostic(
         exc, source, context=context, log_text=log_text, directory=directory
     )
     failure = _classify_fallback(exc, source)
+    _console_log.error(f"[{context or 'maimaidx'}] 成绩获取失败断点: {type(exc).__name__}({failure.code}): {exc} | 诊断文件: {path}")
     if not await _safe_send(matcher, format_user_error(exc, source)):
         return path
     # Timeouts and upstream outages keep the log on disk for operators, but a
