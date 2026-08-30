@@ -23,7 +23,9 @@ search_bpm          = on_command('bpm查歌', aliases={'search bpm'})
 search_artist       = on_command('曲师查歌', aliases={'search artist'})
 search_charter      = on_command('谱师查歌', aliases={'search charter'})
 search_alias_song   = on_endswith(('是什么歌', '是啥歌'))
-query_chart         = on_regex(r'^id\s?([0-9]+)$', re.IGNORECASE)
+# \b 词边界替代 ^ 行首锚定：消息以 @ 段开头时（如 "@bot id 11630"，含卡片按钮
+# 回发场景），完整消息串带 CQ 前缀，^id 永远匹配不上导致指令静默无响应。
+query_chart         = on_regex(r'\bid\s?([0-9]+)\s*$', re.IGNORECASE)
 
 
 async def _song_guess_message(music, user_id: int) -> Message:
