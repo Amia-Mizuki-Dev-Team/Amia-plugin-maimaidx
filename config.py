@@ -5,47 +5,10 @@ from typing import Dict, List, Optional
 from loguru import logger as log
 from nonebot import get_driver, get_plugin_config
 from pydantic import BaseModel, Field, AliasChoices
-from dotenv import find_dotenv, dotenv_values
 
+from .libraries.env_layering import load_env_layers
 
-def _dict_get_ci(mapping: dict, key: str):
-    """大小写不敏感读取字典项。"""
-    for k, v in mapping.items():
-        if k.lower() == key.lower():
-            return v
-    return None
-
-
-def _load_env_layers() -> str:
-    """按 NoneBot2 官方分层规则注入 dotenv 到 os.environ，供 os.getenv 兜底读取。
-
-    优先级（高 → 低）：进程真实环境变量 > .env.{ENVIRONMENT}（如 .env.prod / .env.dev）
-    > .env；ENVIRONMENT 取自真实环境变量或 .env，缺省 prod。get_plugin_config 走
-    driver.config，NoneBot 自身已按同一套规则分层，两条读取路径行为一致。
-    """
-    found = find_dotenv(usecwd=True)
-    base_path = Path(found).resolve() if found else None
-    base_vals: dict = {}
-    search_dirs = []
-    if base_path and base_path.is_file():
-        base_vals = {k: v for k, v in dotenv_values(base_path).items() if v is not None}
-        search_dirs.append(base_path.parent)
-    search_dirs.append(Path.cwd())
-    env_name = os.getenv("ENVIRONMENT") or _dict_get_ci(base_vals, "ENVIRONMENT") or "prod"
-    spec_vals: dict = {}
-    for d in search_dirs:
-        spec_path = d / f".env.{env_name}"
-        if spec_path.is_file():
-            spec_vals = {k: v for k, v in dotenv_values(spec_path).items() if v is not None}
-            break
-    # setdefault：.env.{ENVIRONMENT} 覆盖 .env 同名键，但不覆盖真实环境变量
-    for key, value in {**base_vals, **spec_vals}.items():
-        os.environ.setdefault(key, value)
-    log.info(f"[maimaidx] 运行环境 ENVIRONMENT={env_name}，dotenv 分层注入完成")
-    return env_name
-
-
-_load_env_layers()
+load_env_layers("[maimaidx]")
 
 
 def _oauth_env_fallback(*names: str) -> str:
