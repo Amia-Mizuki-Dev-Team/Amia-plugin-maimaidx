@@ -13,9 +13,8 @@ except (RuntimeError, ModuleNotFoundError):
     except ModuleNotFoundError:
         import amia_core as core
 
-from ..config import maiconfig
 from ..libraries.maimaidx_api_data import maiApi
-from ..libraries.maimaidx_types import normalize_source
+from ..libraries.maimaidx_merge import better_fc, better_fs, chart_type, normalized_song_id
 from ..libraries.maimaidx_music import mai
 from .normalization import catalog_song_id, normalize_chart_type, normalize_song_id, resolve_qq_id
 
@@ -202,8 +201,8 @@ class MaimaidxDataProvider:
         qq = resolve_qq_id(identity)
         if qq is None:
             return None
-        source = normalize_source(maiconfig.prober_source)
-        player = await maiApi.query_user_b50(qqid=qq, source=source)
+        # 落雪 + 水鱼双源汇总后的 B50；rating 取合并值
+        player, _meta = await maiApi.query_user_b50_merged(qqid=qq)
         if player is None:
             return None
         return core.MaimaiPlayerSummary(
@@ -215,24 +214,32 @@ class MaimaidxDataProvider:
         )
 
     async def get_player_best_records(self, identity, query=None):
-        """Return B50 only; this is intentionally distinct from full records."""
+        """Return merged B50 only; this is intentionally distinct from full records."""
         qq = resolve_qq_id(identity)
         if qq is None:
             return []
-        source = normalize_source(maiconfig.prober_source)
-        player = await maiApi.query_user_b50(qqid=qq, source=source)
+        player, _meta = await maiApi.query_user_b50_merged(qqid=qq)
         if player is None or player.charts is None:
             return []
         records = []
-        for source, charts in ((source, player.charts.sd or []), (source, player.charts.dx or [])):
+        for charts in (player.charts.sd or [], player.charts.dx or []):
             for record in charts:
-                converted = _record_to_core(record, source=source, query=query)
+                # 双源汇总结果统一为原生 song_id；逐条读取记录自带的数据源标注
+                converted = _record_to_core(
+                    record,
+                    source=str(getattr(record, "source", "") or "merged"),
+                    query=query,
+                )
                 if converted is not None:
                     records.append(converted)
         return records
 
     async def get_player_records(self, identity, query=None):
-        """Return complete Diving-Fish OAuth records, never a B50 fallback."""
+        """Return complete Diving-Fish OAuth records, never a B50 fallback.
+
+        达成率以水鱼 OAuth 全量成绩为权威源；落雪 SimpleScore 仅按谱面键
+        升级 fc/fs 徽章，拉取失败不阻断。
+        """
         if (
             query is not None
             and query.min_constant is not None
@@ -259,8 +266,40 @@ class MaimaidxDataProvider:
                 raise TypeError("WaterFish records response does not contain 'records' or 'data'")
         if not isinstance(raw_records, list):
             raise TypeError("WaterFish records response must be a list")
+        # 落雪 SimpleScore 没有达成率字段，只能按谱面键升级 fc/fs 徽章；
+        # 拉取失败仅记录日志，不阻断水鱼全量成绩。
+        try:
+            simple_badges = {}
+            for simple in await maiApi.query_player_simple_scores(qq):
+                simple_badges[(normalized_song_id(simple), int(simple.level_index))] = simple
+        except Exception as exc:
+            log.warning("落雪 SimpleScore 徽章补充失败（不阻断全量成绩）: %s", exc)
+            simple_badges = {}
         records = {}
         for record in raw_records:
+            if simple_badges:
+                # 谱面键 = 归一化原生 id + 难度序号（曲目类型由 song_id 唯一确定）。
+                # 水鱼记录缺失 type 时 _chart_info 缺省补 "standard"，DX 记录
+                # （水鱼 id = 原生 +10000，即 10000 < id < 20000）的键会与落雪
+                # SimpleScore 的原生 id 键错位、徽章静默失效 —— 此类记录跳过
+                # 徽章升级并记 debug 日志，不中断全量查询。
+                if (
+                    10000 < int(getattr(record, "song_id", 0) or 0) < 20000
+                    and chart_type(record) != "dx"
+                ):
+                    log.debug(
+                        "水鱼记录 type 字段缺失/异常（song_id=%s type=%r），"
+                        "徽章键无法对齐落雪 SimpleScore，跳过徽章升级",
+                        getattr(record, "song_id", None),
+                        getattr(record, "type", None),
+                    )
+                else:
+                    badge = simple_badges.get(
+                        (normalized_song_id(record), int(record.level_index))
+                    )
+                    if badge is not None:
+                        record.fc = better_fc(record.fc, badge.fc)
+                        record.fs = better_fs(record.fs, badge.fs)
             converted = _record_to_core(record, source="diving-fish", query=query)
             if converted is not None:
                 existing = records.get(converted.chart)

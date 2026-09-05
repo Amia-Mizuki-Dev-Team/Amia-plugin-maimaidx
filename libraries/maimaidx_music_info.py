@@ -3,6 +3,7 @@ import copy
 from .image import rounded_corners
 from .maimaidx_best_50 import *
 from .maimaidx_error import (
+    MaimaiError,
     OAuthConsentRequiredError,
     UserNotFoundError,
     UserDisabledQueryError,
@@ -46,7 +47,7 @@ async def draw_music_info(
     try:
         if qqid:
             if user is None:
-                player = await maiApi.query_user_b50(qqid=qqid, source=normalize_source(maiconfig.prober_source))
+                player, _meta = await maiApi.query_user_b50_merged(qqid=qqid)
             else:
                 player = user
             if music.basic_info.version == list(plate_to_dx_version.values())[-1]:
@@ -151,7 +152,15 @@ async def _legacy_draw_music_play_data(qqid: int, music_id: str) -> Union[str, M
     """
     try:
         diff: List[Union[None, PlayInfoDev, PlayInfoDefault]]
-        if normalize_source(maiconfig.prober_source) == "diving-fish":
+        # 按水鱼 OAuth 授权状态选择数据源：已授权走水鱼，否则走落雪/牌子路径，
+        # 不再依赖全局默认数据源配置。
+        use_fish_oauth = False
+        try:
+            await maiApi.oauth.get_access_token(maiApi.oauth_subject(qqid=qqid))
+            use_fish_oauth = True
+        except MaimaiError:
+            use_fish_oauth = False
+        if use_fish_oauth:
             data = await maiApi.query_player_record(
                 maiApi.oauth_subject(qqid=qqid), music_id
             )
@@ -281,9 +290,12 @@ def _normalise_play_records(music: Music, records: list) -> list:
 async def render_music_play_data(
     music: Music,
     records: list,
-    source: SourceName,
+    source: SourceName | str,
 ) -> MessageSegment:
-    """Render the upstream-style 1200x900 play-detail card."""
+    """Render the upstream-style 1200x900 play-detail card.
+
+    ``source`` additionally accepts ``"merged"`` for dual-source summaries.
+    """
     if not records:
         raise MusicNotPlayError()
     diff = _normalise_play_records(music, records)

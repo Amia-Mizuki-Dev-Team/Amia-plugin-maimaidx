@@ -45,7 +45,9 @@ def normalize_song_id(
     if chart_type == "utage":
         return value if value >= 100000 else None
 
-    if source == "lxns":
+    # "merged" records come from the dual-source summary, which already
+    # normalizes every song id to the native (LXNS) namespace.
+    if source in {"lxns", "merged"}:
         return value
     if source in {"fish", "diving-fish"}:
         if chart_type == "dx" and 10000 < value < 20000:

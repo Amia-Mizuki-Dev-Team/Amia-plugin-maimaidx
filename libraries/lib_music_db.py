@@ -51,8 +51,18 @@ def get_version_title(version_num: int) -> str:
 
 # ==========================================
 # musicDB.json 异步缓存管理器（单例）
-# musicDB.json 结构: {"lxns_song_id": {"name": "...", "version": int}, ...}
-# 键 = 落雪原始 song_id（如 "8"），或 SD/DX 分离后的 ID（如 "10008" 表示 DX 谱面）
+#
+# musicDB.json 结构 —— **写入方是 Mizuki-plugin-Maimai-sync 的
+# lib_musicDB.convert_to_music_db**（本插件只读，勿在本插件内改写）：
+#   双命名空间、谱面级存储：
+#     原生键  "lxns_song_id"        = SD 谱面版本（≈歌曲版本）
+#     +10000 键 "lxns_song_id+10000" = DX 谱面版本（水鱼命名空间）
+#   {"<str(song_id)>": {"name": "...", "version": int}, ...}
+#
+# 消费方（含 coach 的 core/version_map.py）按**歌曲级**使用：B15/B35 版本
+# 判定只查原生键/歌曲版本，+10000 键仅作 DX-only 歌曲原生键缺失时的兜底
+# —— B15/B35 按歌曲版本判定，与谱面类型（DX/SD）完全无关，
+# 禁止按 chart_type 分流查找（勿据旧注释「修复」回去）。
 # ==========================================
 
 class MusicDBCache:
@@ -105,43 +115,6 @@ class MusicDBCache:
 
 
 music_db_cache = MusicDBCache()
-
-
-# ==========================================
-# musicDB.json 生成器
-# 从落雪 API 返回的曲目列表中提取 song_id → {name, version} 映射
-# 每次双源同步后自动更新，确保曲绘下载使用最新权威列表
-# ==========================================
-
-async def generate_music_db(lxns_music_list: list, save_path: Path) -> None:
-    """
-    从落雪 API 曲目列表生成 musicDB.json。
-
-    musicDB.json 结构:
-    {"lxns_song_id": {"name": "曲名", "version": 版本号_int}, ...}
-
-    Args:
-        lxns_music_list: 落雪 /song/list 接口返回的曲目列表
-        save_path: musicDB.json 的保存路径
-    """
-    if not lxns_music_list:
-        log.warning("落雪曲目列表为空，跳过 musicDB.json 生成")
-        return
-
-    music_db = {}
-    for song in lxns_music_list:
-        if isinstance(song, dict) and 'id' in song:
-            sid = str(song['id'])
-            music_db[sid] = {
-                "name": song.get('title', ''),
-                "version": song.get('version', 0)
-            }
-
-    save_path.parent.mkdir(parents=True, exist_ok=True)
-    async with aiofiles.open(save_path, 'w', encoding='utf-8') as f:
-        await f.write(json.dumps(music_db, ensure_ascii=False, indent=2))
-
-    log.info(f"已生成 musicDB.json ({len(music_db)} 首歌曲) → {save_path}")
 
 
 # ==========================================

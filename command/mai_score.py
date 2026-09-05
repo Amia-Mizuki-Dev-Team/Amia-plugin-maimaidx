@@ -18,11 +18,9 @@ from ..libraries.maimaidx_error import (
     OAuthConsentRequiredError,
     UserNotBindLXNSError,
     UserNotBindFishError,
-    SourceNotSupportedError,
 )
+from ..libraries.maimaidx_merge import fish_consent_missing, sources_label
 from ..libraries.maimaidx_music import mai
-from ..libraries.maimaidx_api_data import user_source_route, maiconfig
-from ..libraries.maimaidx_types import SourceName, normalize_source, source_label
 from ..dependencies import get_at_user_id, get_real_qq
 from ..release010_import import (
     format_user_error,
@@ -118,10 +116,6 @@ def _search_music(name: str) -> Optional[Any]:
     return _resolve_music(name)[0]
 
 
-def _selected_source(qqid: int | str) -> SourceName:
-    return normalize_source(user_source_route.get(qqid, maiconfig.prober_source))
-
-
 def _ambiguous_message(matches: list[Any]) -> str:
     ids = "、".join(str(m.id) for m in matches[:12])
     return f"找到多个可能的曲目，请改用歌曲 ID 查询：{ids}"
@@ -145,9 +139,8 @@ async def _(bot: Bot, event: MessageEvent, message: Message = CommandArg(), user
             "我还没把你的平台身份绑定到真实 QQ，先完成 qbind 绑定后再生成 B50。",
             reply_message=True,
         )
-    source = _selected_source(qqid if qqid is not None else event.user_id)
     try:
-        img_res = await generate(qqid, username, source=source)
+        img_res = await generate(qqid, username)
         await best50.finish(img_res, reply_message=True)
     except FinishedException:
         raise
@@ -179,11 +172,9 @@ async def _(bot: Bot, event: MessageEvent, message: Message = CommandArg(), user
             "我还没把你的平台身份绑定到真实 QQ，先完成 qbind 绑定后再生成 AP50。",
             reply_message=True,
         )
-    source = _selected_source(qqid if qqid is not None else event.user_id)
-    if source == "diving-fish":
-        await ap50.finish("AP50 目前只支持落雪查分器，请先发送「切换数据源 落雪」。", reply_message=True)
     try:
-        img_res = await generate(qqid, username, source=source, is_ap=True)
+        # merged 调用下水鱼侧自动不参与（无 AP50 数据），降级结果标注“仅落雪”
+        img_res = await generate(qqid, username, is_ap=True)
         await ap50.finish(img_res, reply_message=True)
     except FinishedException:
         raise
@@ -202,9 +193,8 @@ async def _(bot: Bot, event: MessageEvent, message: Message = CommandArg(), user
         
     raw_qq = user_id if user_id is not None else event.user_id
     real_qq_str = get_real_qq(str(raw_qq))
-    # Protected Diving-Fish requests must use the same real QQ identity that
-    # qbind used for the old developer endpoint.  Never hash an adapter's
-    # virtual ``event.user_id`` as an OAuth subject.
+    # 受保护的水鱼 OAuth 请求必须使用 qbind 解析出的真实 QQ 身份派生 subject；
+    # 绝不能把适配器的虚拟 ``event.user_id`` 哈希成 OAuth subject。
     # A native @ segment already contains a real QQ number.  qbind remains
     # mandatory for the sender's virtual adapter id, but must not require a
     # second binding entry for a directly targeted QQ.
@@ -228,10 +218,11 @@ async def _(bot: Bot, event: MessageEvent, message: Message = CommandArg(), user
         await minfo.finish('没有找到这首歌，请检查曲名或 ID 后重试。', reply_message=True)
     
     try:
-        source = _selected_source(qqid)
-        data = await player_score_data(qqid, music, source=source)
-        tip = MessageSegment.text(f"\n当前数据源：{source_label(source)}。发送「切换数据源 落雪/水鱼」可更换查分器。")
-        await minfo.finish(data + tip, reply_message=True)
+        data, meta = await player_score_data(qqid, music)
+        tip_text = f"\n当前数据源：{sources_label(meta)}。"
+        if fish_consent_missing(meta):
+            tip_text += "发送「水鱼授权」可启用双源汇总。"
+        await minfo.finish(data + MessageSegment.text(tip_text), reply_message=True)
     except FinishedException:
         raise
     except OAuthConsentRequiredError:

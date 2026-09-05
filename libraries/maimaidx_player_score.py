@@ -12,7 +12,13 @@ from pyecharts.charts import Pie
 from ..config import *
 from .image import *
 from .maimaidx_api_data import *
-from .maimaidx_best_50 import ScoreBaseImage, changeColumnWidth, coloumWidth, computeRa
+from .maimaidx_best_50 import (
+    ScoreBaseImage,
+    _find_local_chart_music,
+    changeColumnWidth,
+    coloumWidth,
+    computeRa,
+)
 from .maimaidx_error import (
     OAuthConsentRequiredError,
     UserNotFoundError,
@@ -23,6 +29,7 @@ from .maimaidx_error import (
     MaimaiResourceError,
     MaimaiDataFormatError,
 )
+from .maimaidx_merge import effective_source
 from .maimaidx_model import ChartInfo, PlanInfo, PlayInfoDefault, PlayInfoDev, RaMusic
 from .maimaidx_music import Music, mai
 from .maimaidx_music_info import draw_music_info, render_music_play_data
@@ -485,29 +492,50 @@ async def rise_score_data(
         `MessageSegment`
     """
     try:
-        user = await maiApi.query_user_b50(
+        user, meta = await maiApi.query_user_b50_merged(
             qqid=qqid,
             username=username,
-            source=normalize_source(maiconfig.prober_source),
         )
         records = await maiApi.query_user_plate(qqid=qqid, username=username, version=list(plate_to_dx_version.values()))
         old_records: DefaultDict[int, Dict[int, float]] = defaultdict(dict)
         for m in records:
             old_records[m.song_id][m.level_index] = m.achievements
-        
+
+        # 汇总结果统一为原生 song_id；先映射回本地曲库 id，保证上分去重可比对
+        for chart in (user.charts.sd or []) + (user.charts.dx or []):
+            local_music = _find_local_chart_music(chart.song_id, chart.type)
+            if local_music:
+                chart.song_id = int(local_music.id)
+            elif (
+                str(getattr(chart, "type", "") or "").strip().lower() in {"dx", "deluxe"}
+                and 0 < chart.song_id < 10000
+                and (chart.song_id + 10000) in old_records
+            ):
+                # 本地曲库缺新歌时映射失败，chart.song_id 残留原生 id；而
+                # 水鱼 plate（old_records）与本地曲库的 DX 命名空间都是
+                # 「原生 id + 10000」，残留原生 id 与之比对永不相等，
+                # 已毕业（已有更高成绩/SSS+）的谱面会被当作未游玩而误推荐。
+                # 仅当 +10000 id 确实存在于 old_records（水鱼侧确认该 DX
+                # 谱面）时才改写归一，避免误伤宴会场等特殊 id 命名空间。
+                chart.song_id += 10000
+                log.warning(
+                    f"[rise] 本地曲库缺失 DX 谱面 song_id={chart.song_id - 10000}，"
+                    f"已按 +10000 归一到水鱼命名空间（{chart.song_id}）参与上分去重"
+                )
+
         sd, sd_low_score = get_rise_score_list(old_records, 'SD', user.charts.sd, level, score)
         dx, dx_low_score = get_rise_score_list(old_records, 'DX', user.charts.dx, level, score)
-        
+
         if not sd and not dx:
             return MessageSegment.text('没有推荐的铺面')
-        
+
         lensd, lendx = len(sd), len(dx)
-        
+
         h = max(lensd, lendx)
         height = h * 140 + 110 + 150
         image = tricolor_gradient(1400, height)
-        
-        ds = DrawScore(image, source="diving-fish")
+
+        ds = DrawScore(image, source=effective_source(meta))
         im = ds.draw_rise(sd, sd_low_score, dx, dx_low_score)
         
         msg = MessageSegment.image(image_to_base64(im.crop((200, 0, 1200, height))))
@@ -895,25 +923,17 @@ def score_line_data(music: Music, level_index: int, line: float) -> str:
 async def player_score_data(
     qqid: int,
     music: Music,
-    *,
-    source: SourceName | str,
-) -> MessageSegment:
+) -> "tuple[MessageSegment, dict]":
     """
-    查询玩家单曲成绩
+    查询玩家单曲成绩（落雪 + 水鱼双源逐谱面汇总）
 
     Params:
         `qqid`: 用户QQ
         `music`: 曲目对象
     Returns:
-        `Union[MessageSegment, str]`
+        `tuple[MessageSegment, dict]`: 渲染图与数据源元信息
     """
-    selected = normalize_source(source)
-    if selected == "lxns":
-        records = await maiApi.query_user_song_score(qqid, str(music.id))
-    else:
-        subject = maiApi.oauth_subject(qqid=qqid)
-        records = await maiApi.query_player_record(subject, str(music.id))
-        await maiApi.remember_oauth_authorization(str(qqid))
+    records, meta = await maiApi.query_user_song_score_merged(qqid, str(music.id))
     if not records:
         raise MusicNotPlayError()
     for record in records:
@@ -921,10 +941,12 @@ async def player_score_data(
         if 0 <= index < len(music.ds) and not getattr(record, 'ds', 0):
             record.ds = music.ds[index]
         record.song_id = int(music.id)
-        record.source = selected
         if not getattr(record, 'title', ''):
             record.title = music.title
-    return await render_music_play_data(music, records, selected)
+    return (
+        await render_music_play_data(music, records, effective_source(meta)),
+        meta,
+    )
 
 
 async def rating_ranking_data(name: Optional[str], page: Optional[int]) -> MessageSegment:

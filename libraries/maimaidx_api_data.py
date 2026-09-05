@@ -1,3 +1,4 @@
+import asyncio
 import httpx
 import re
 from typing import List, Optional, Any, Mapping
@@ -22,9 +23,6 @@ from .maimaidx_oauth_binding import (
     build_oauth_binding,
     is_authorized_oauth_binding,
 )
-
-# 内存路由字典，用于动态切置默认查分端
-user_source_route = {}
 
 # ==========================================
 # 落雪 / 水鱼 API 共享常量
@@ -101,23 +99,13 @@ class RecordsResult(list[ChartInfo]):
 class MaiApi:
     def __init__(self):
         self.headers = {}
-        # Kept as a read-only compatibility flag so old callers can detect a
-        # stale environment setting.  It is never sent to Diving-Fish.
-        self.token: Optional[str] = maiconfig.maimaidxtoken or None
         self.oauth = DivingFishOAuth.from_config(maiconfig)
-        self._legacy_token_warned = False
 
     def load_token_proxy(self):
-        """Load the LXNS header and warn about the retired Fish token."""
+        """加载落雪开放平台请求头；水鱼侧仅使用 OAuth，不使用任何静态 Token。"""
         if maiconfig.lxnstoken:
             self.headers = {"Authorization": maiconfig.lxnstoken}
             log.info("落雪开放平台 API 凭证加载成功。")
-        if self.token and not self._legacy_token_warned:
-            log.warning(
-                "检测到已废弃的 MAIMAIDX_TOKEN；水鱼受保护接口已切换 OAuth，"
-                "该值不会被发送，请改用 DIVING_FISH_OAUTH_CLIENT_ID/SECRET。"
-            )
-            self._legacy_token_warned = True
 
     @property
     def oauth_configured(self) -> bool:
@@ -434,6 +422,155 @@ class MaiApi:
             log.warning(f"落雪单曲成绩查询失败(qqid={qqid}, music_id={music_id}): {e}")
             raise
 
+    async def query_user_song_score_merged(self, qqid: int, music_id: str) -> "tuple[List[ChartInfo], dict]":
+        """
+        并发查询落雪单曲成绩与水鱼 OAuth 单曲成绩，逐谱面汇总。
+
+        水鱼 OAuth 未授权（OAuthConsentRequiredError）时自动降级为仅落雪，
+        并在 meta 中注明；两源全部失败时抛落雪侧错误（未配置 lxnstoken 时
+        抛水鱼侧错误），水鱼明确报“未游玩”时优先保留该语义。
+        返回 ``(list[ChartInfo], meta)``。
+        """
+        from .maimaidx_merge import (
+            LABEL_FISH,
+            LABEL_LXNS,
+            merge_chart_infos,
+            summarize_error,
+        )
+
+        async def _fetch_lxns():
+            return await self.query_user_song_score(qqid, str(music_id))
+
+        async def _fetch_fish():
+            subject = self.oauth_subject(qqid=qqid)
+            records = await self.query_player_record(subject, str(music_id))
+            await self.remember_oauth_authorization(str(qqid))
+            return records
+
+        lxns_res, fish_res = await asyncio.gather(
+            _fetch_lxns(), _fetch_fish(), return_exceptions=True
+        )
+        lxns_exc = lxns_res if isinstance(lxns_res, BaseException) else None
+        fish_exc = fish_res if isinstance(fish_res, BaseException) else None
+        lxns_records = [] if (lxns_exc is not None or not lxns_res) else list(lxns_res)
+        fish_records = [] if (fish_exc is not None or not fish_res) else list(fish_res)
+
+        if lxns_exc is not None and fish_exc is not None:
+            # 两源全失败：优先抛落雪错误；落雪未配置凭证时抛水鱼错误。
+            if isinstance(lxns_exc, TokenNotFoundError):
+                raise fish_exc
+            raise lxns_exc
+        if not lxns_records and not fish_records:
+            # 两源都没有可用成绩：优先回放明确的“未游玩”语义，否则抛落雪错误。
+            if isinstance(fish_exc, MusicNotPlayError):
+                raise fish_exc
+            if lxns_exc is not None:
+                raise lxns_exc
+            if fish_exc is not None:
+                raise fish_exc
+
+        meta = {
+            LABEL_LXNS: {
+                "ok": bool(lxns_records),
+                "error": None,
+                "error_type": None,
+            },
+            LABEL_FISH: {
+                "ok": bool(fish_records),
+                "error": None,
+                "error_type": None,
+            },
+        }
+        if lxns_exc is not None:
+            meta[LABEL_LXNS].update(
+                error=summarize_error(lxns_exc), error_type=type(lxns_exc).__name__
+            )
+        elif not lxns_res:
+            meta[LABEL_LXNS].update(error="未返回成绩数据", error_type="NoData")
+        if fish_exc is not None:
+            meta[LABEL_FISH].update(
+                error=summarize_error(fish_exc), error_type=type(fish_exc).__name__
+            )
+        elif not fish_res:
+            meta[LABEL_FISH].update(error="未返回成绩数据", error_type="NoData")
+        return merge_chart_infos(lxns_records, fish_records), meta
+
+    async def query_player_simple_scores(self, qqid: int) -> List[ChartInfo]:
+        """
+        拉取落雪全量 SimpleScore 成绩。
+
+        该接口没有 achievements 字段，只有 fc/fs 徽章等摘要信息，
+        因此只能作为水鱼全量成绩的徽章补充源，不能作为达成率数据源。
+        """
+        if not maiconfig.lxnstoken:
+            raise TokenNotFoundError()
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                profile_res = await client.get(
+                    f"{LXNS_BASE}/maimai/player/qq/{qqid}",
+                    headers=self.headers
+                )
+            if profile_res.status_code in {401, 403}:
+                self._raise_lxns_auth_error(profile_res.status_code)
+            if profile_res.status_code in {400, 404}:
+                raise UserNotFoundError()
+            if profile_res.status_code != 200:
+                raise ServerError()
+            pdata = profile_res.json().get("data", {})
+            friend_code = pdata.get("friend_code")
+            if not friend_code:
+                log.warning(f"[SimpleScore/落雪] 断点: qq={qqid} 资料接口没有返回 friend_code")
+                raise UserNotFoundError()
+
+            async with httpx.AsyncClient(timeout=15) as client:
+                res = await client.get(
+                    f"{LXNS_BASE}/maimai/player/{friend_code}/scores",
+                    headers=self.headers,
+                )
+            if res.status_code == 429:
+                raise ServerError()
+            if res.status_code in {401, 403}:
+                self._raise_lxns_auth_error(res.status_code)
+            if res.status_code in {400, 404}:
+                raise UserNotFoundError()
+            if res.status_code != 200:
+                raise ServerError()
+            scores = res.json()
+            if isinstance(scores, dict):
+                scores = scores.get("data", scores)
+            if not isinstance(scores, list):
+                raise MaimaiDataFormatError()
+            result: List[ChartInfo] = []
+            for s in scores:
+                if not isinstance(s, dict):
+                    continue
+                chart_type = str(s.get("type", "") or "").strip().lower()
+                result.append(
+                    ChartInfo(
+                        song_id=int(s.get("id", s.get("song_id", 0)) or 0),
+                        title="",
+                        level="",
+                        level_index=int(s.get("level_index", 0) or 0),
+                        achievements=0.0,
+                        dxScore=0,
+                        rate="",
+                        fc=str(s.get("fc", "") or ""),
+                        fs=str(s.get("fs", "") or ""),
+                        type=chart_type or "standard",
+                        level_label="",
+                        ds=0.0,
+                        source="lxns",
+                        ra=0,
+                    )
+                )
+            return result
+        except (MaimaiTimeoutError, TokenNotFoundError, UserDisabledQueryError, UserNotFoundError, ServerError, MaimaiDataFormatError):
+            raise
+        except (httpx.TimeoutException, TimeoutError) as e:
+            raise MaimaiTimeoutError() from e
+        except httpx.HTTPError as e:
+            raise ServerError() from e
+
     async def query_user_b50(
         self,
         qqid: Optional[int] = None,
@@ -584,6 +721,65 @@ class MaiApi:
             raise ServerError()
         _log_score_breakpoint(f"{stage}/水鱼", f"POST {FISH_BASE}/query/player", status=res.status_code, qqid=qqid, username=username)
         raise ServerError()
+
+    async def query_user_b50_merged(
+        self,
+        qqid: Optional[int] = None,
+        username: Optional[str] = None,
+        *,
+        is_ap: bool = False,
+    ) -> "tuple[Any, dict]":
+        """
+        并发拉取落雪与水鱼 B50，逐谱面汇总后返回。
+
+        单源 MaimaiError/异常自动降级为另一源单源结果（is_ap 时水鱼侧直接
+        不参与，水鱼公开 B50 没有 AP50 数据）；两源全部失败时抛落雪侧错误，
+        未配置 lxnstoken 时抛水鱼侧错误，保持既有错误语义。
+        返回 ``(UserInfo, meta)``，meta 描述每源成功与否及失败原因摘要。
+        """
+        from .maimaidx_merge import LABEL_FISH, LABEL_LXNS, merge_b50, summarize_error
+
+        async def _fetch_lxns():
+            return await self.query_user_b50(qqid=qqid, username=username, source=LABEL_LXNS, is_ap=is_ap)
+
+        async def _fetch_fish():
+            if is_ap:
+                return None
+            return await self.query_user_b50(qqid=qqid, username=username, source=LABEL_FISH)
+
+        lxns_res, fish_res = await asyncio.gather(
+            _fetch_lxns(), _fetch_fish(), return_exceptions=True
+        )
+        lxns_exc = lxns_res if isinstance(lxns_res, BaseException) else None
+        fish_exc = fish_res if isinstance(fish_res, BaseException) else None
+
+        if (lxns_exc is not None or lxns_res is None) and (fish_exc is not None or fish_res is None):
+            if isinstance(lxns_exc, TokenNotFoundError) and fish_exc is not None:
+                raise fish_exc
+            if lxns_exc is not None:
+                raise lxns_exc
+            if fish_exc is not None:
+                raise fish_exc
+            raise ServerError()
+
+        userinfo, meta = merge_b50(
+            None if lxns_exc is not None else lxns_res,
+            None if fish_exc is not None else fish_res,
+        )
+        for label, result in ((LABEL_LXNS, lxns_res), (LABEL_FISH, fish_res)):
+            entry = meta.get(label)
+            if entry is None:
+                continue
+            if isinstance(result, BaseException):
+                entry.update(
+                    ok=False,
+                    error=summarize_error(result),
+                    error_type=type(result).__name__,
+                )
+            elif result is None:
+                # is_ap 时水鱼侧主动不参与，标注为“不适用”而非“失败”
+                entry.update(ok=False, error=None, error_type="not_applicable")
+        return userinfo, meta
 
     @staticmethod
     def _record_items(payload: Any) -> list[dict]:

@@ -41,19 +41,20 @@ class Release010MaimaiErrorTests(unittest.TestCase):
         self.assertIn("HX-MAI-005", format_user_error(UserNotFoundError(), "MAI"))
         self.assertNotIn("<class", format_user_error(UserNotFoundError(), "MAI"))
 
-    def test_source_aware_player_miss_explains_how_to_switch(self):
+    def test_source_aware_player_miss_does_not_tell_users_to_switch(self):
         lxns_message = format_user_error(
             UserNotFoundError(source="lxns"), "MAI", include_code=False
         )
         self.assertIn("落雪（LXNS）", lxns_message)
-        self.assertIn("切换数据源 水鱼", lxns_message)
+        # 切换数据源指令已移除：双源汇总不再引导用户手工切换
+        self.assertNotIn("切换数据源", lxns_message)
         self.assertNotIn("HX-MAI", lxns_message)
 
         fish_message = format_user_error(
             UserNotFoundError(source="diving-fish"), "MAI", include_code=False
         )
         self.assertIn("水鱼（Diving-Fish）", fish_message)
-        self.assertIn("切换数据源 落雪", fish_message)
+        self.assertNotIn("切换数据源", fish_message)
 
     def test_onebot_send_timeout_is_transport_error(self):
         failure = _classify_fallback(

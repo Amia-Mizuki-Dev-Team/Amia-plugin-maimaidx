@@ -26,20 +26,15 @@ class Config(BaseModel):
     # 【核心路由与双端凭证配置】
     # 使用 AliasChoices 强行兼容大写、小写、带下划线的 env 填写方式，彻底斩断 validation 报错
     # ==========================================
-    # 全局缺省路由配置，可选 'lxns' 或 'diving-fish'
-    prober_source: str = Field(default="lxns", validation_alias=AliasChoices("prober_source", "PROBER_SOURCE"))
-    
+    # 成绩数据固定为 落雪 + 水鱼 双源逐谱面自动汇总，不再有全局默认数据源开关。
+
     # 落雪数据源路径与 Token
     lxnspath: Optional[str] = Field(default=None, validation_alias=AliasChoices("lxnspath", "LXNSPATH", "lxns_path", "LXNS_PATH"))
     lxnstoken: str = Field(default="", validation_alias=AliasChoices("lxnstoken", "LXNSTOKEN", "lxns_token", "LXNS_TOKEN"))
-    
-    # 水鱼数据源 Token
-    maimaidxtoken: Optional[str] = Field(default="", validation_alias=AliasChoices("maimaidxtoken", "MAIMAIDXTOKEN", "maimai_dx_token", "MAIMAIDX_TOKEN"))
 
-    # Diving-Fish OAuth application credentials.  The legacy
-    # ``maimaidxtoken`` field remains only so an existing configuration can be
-    # detected and migrated without breaking plugin import; the API client
-    # never sends it after the OAuth cutover.
+    # Diving-Fish OAuth application credentials.  水鱼侧只使用 OAuth
+    # Bearer 令牌访问受保护接口；旧的 Developer-Token 已停发且不再支持任何
+    # 静态 Token 配置。
     # Fallback: ``FISH_CLIENT_ID``/``FISH_CLIENT_SECRET`` are the same
     # Diving-Fish OAuth application already configured for maimai_sync.  Both
     # plugins share the OAuth binding store, so reusing one client id keeps

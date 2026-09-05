@@ -26,13 +26,37 @@ ginfo <曲名或 ID>
 水鱼授权状态
 水鱼筛选 <key=value ...>
 mai状态 / 个人状态大盘
-切换数据源 <水鱼|落雪>
 mai曲线
 mai最近
 mai热度
 ```
 
 B50 的 B15/B35 按歌曲所属版本划分：B15 为当前版本歌曲，B35 为其余歌曲；它与 DX/SD 谱面类型不是同一个维度。
+
+## 数据源：落雪 + 水鱼 双源自动汇总
+
+成绩数据没有“默认数据源”开关，也移除了 `切换数据源` 指令：所有成绩查询并发请求落雪与水鱼两个上游，并按同谱面键（归一化原生 song_id + 谱面类型 + 难度序号）逐谱面汇总。
+
+汇总规则（同谱面键在两源都有成绩时）：
+
+- `achievements`、`ra` 取两源最大值；
+- `fc` 取两源最优（app > ap > fcp > fc；空串视为无）；
+- `fs` 取两源最优（fsdp/fdxp > fsd/fdx > fsp > fs；空串视为无）；
+- `dxScore`、`rate` 取达成率较高一条记录（平手取落雪）；
+- `ds`、`level` 取非零方，冲突时以落雪为准并记录日志；
+- 同谱面出现在两源不同 B50 分组桶时，归入达成率较高一方所在桶；
+- 汇总后 rating = B35 + B15 单曲 ra 之和（合计为 0 时回退两源 rating 的最大值）；
+- 单源成绩原样保留。
+
+降级与标注：
+
+- 任一源失败时自动降级为另一源单源结果，并在回复中标注（如「仅落雪（水鱼未授权）」「仅水鱼（落雪失败：上游超时）」）；
+- 水鱼 OAuth 未授权时：B50 公共接口照常参与汇总；单曲/全量成绩接口不可用，自动降级为仅落雪并提示发送「水鱼授权」；
+- AP50 依赖落雪 friend_code 端点，水鱼侧不参与，结果标注「仅落雪」；
+- `mai曲线` / `mai最近` / `mai热度` 是落雪特供功能，直接查询落雪，不再要求先切换数据源；
+- 落雪 `GET /player/{friend_code}/scores`（SimpleScore）没有达成率字段，只在 Provider 全量成绩中按谱面键补充 fc/fs 徽章，不能作为达成率数据源。
+
+谱面身份归一化：水鱼 DX 谱面 id = 原生 id + 10000，落雪使用原生 id，宴会场 id ≥ 100000 不做偏移；汇总结果统一使用原生 id。
 
 ### 曲库与进度
 
@@ -75,9 +99,7 @@ id <歌曲 ID>
 默认按钮只保留常用且安全的入口：
 
 - 生成我的 B50；
-- 个人状态大盘；
-- 默认切换至落雪；
-- 默认切换至水鱼。
+- 个人状态大盘。
 
 付费名片不会出现在默认快捷按钮中，但对应文字指令仍可按权限和确认流程使用。
 
@@ -171,7 +193,7 @@ B50 使用公开的 `/query/player`，不需要 OAuth；单曲成绩、完整成
 core.MAIMAI_DATA_PROVIDER  # "maimai.data"
 ```
 
-提供玩家摘要、完整成绩、曲库、谱面信息和 B50 扩展。统一谱面键由基础 `song_id + chart_type + difficulty_index` 组成；消费者不能自行 `% 10000` 或读取 maimaidx 私有数据文件。
+提供玩家摘要、完整成绩、曲库、谱面信息和 B50 扩展。玩家摘要与 B50 记录来自落雪 + 水鱼双源逐谱面汇总，rating 为合并值；统一谱面键由基础 `song_id + chart_type + difficulty_index` 组成；消费者不能自行 `% 10000` 或读取 maimaidx 私有数据文件。
 
 曲目信息卡涉及 B15/B35 增益计算时，应先按歌曲版本决定所属 Best 分组，再按实际谱面类型读取对应 DX/SD 谱面数据，不能把“Best 分组”和“谱面类型”混为一谈。
 
@@ -198,7 +220,6 @@ src/plugins/Amia-plugin-maimaidx/
 
 | 配置项 | 说明 | 默认值 |
 | --- | --- | --- |
-| `PROBER_SOURCE` | 默认数据源：`lxns` 或 `diving-fish` | `lxns` |
 | `LXNS_TOKEN` | LXNS 开发者 API Token | 空 |
 | `DIVING_FISH_OAUTH_CLIENT_ID` | 水鱼 OAuth 应用 Client ID | 空 |
 | `DIVING_FISH_OAUTH_CLIENT_SECRET` | 水鱼 OAuth 应用 Client Secret，只能放在服务端环境变量 | 空 |
@@ -210,7 +231,7 @@ src/plugins/Amia-plugin-maimaidx/
 | `SAVEINMEM` | 启动时预加载图片资源 | `true` |
 | `MAIMAIDX_ALIAS_PROXY` | 通过 `www.yuzuchan.cn` 访问柚子别名库 | `false` |
 
-旧 `MAIMAIDX_TOKEN` 只用于提示迁移，不会再被发送到水鱼接口。
+旧 `PROBER_SOURCE` 与 `MAIMAIDX_TOKEN` 已废弃，不再生效：数据源固定为落雪 + 水鱼双源自动汇总，水鱼受保护接口只接受 OAuth Bearer 令牌。`.env` 中残留的这两个键会被 Config 的 `extra="allow"` 静默忽略，不会再出现迁移警告。
 
 真实 OAuth Secret 只能通过本地环境或 NoneBot 配置提供，不能写入代码、README、截图、日志、诊断文件或 Git 历史。如果 Secret 曾经出现在聊天、Issue、日志或 Git 历史中，应在水鱼控制台重新生成。
 

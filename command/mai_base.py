@@ -7,9 +7,8 @@ from io import BytesIO
 from nonebot import on_command
 from nonebot.adapters.onebot.v11 import Bot, Message, MessageEvent, MessageSegment
 from nonebot.exception import FinishedException
-from nonebot.params import CommandArg
 from loguru import logger as log
-from ..libraries.maimaidx_api_data import maiApi, user_source_route, maiconfig, is_official_bot, build_markdown_keyboard
+from ..libraries.maimaidx_api_data import maiApi, maiconfig, is_official_bot, build_markdown_keyboard
 from ..dependencies import build_markdown_segment as _build_markdown_segment, get_real_qq
 from PIL import Image, ImageDraw, ImageFont
 from ..config import SIYUAN
@@ -18,7 +17,6 @@ from ..libraries.maimaidx_error import OAuthConsentRequiredError
 
 # 指令注册总览
 maimaidxhelp = on_command('mai帮助', aliases={'帮助maimaiDX', '帮助maimaidx'}, priority=5, block=True)
-switch_source = on_command('切换数据源')
 user_profile = on_command('mai状态', aliases={'详细信息', 'mai个人中心', '个人状态大盘'})
 render_curve = on_command('mai曲线')
 render_recent = on_command('mai最近', aliases={'mai最近成绩', '最近记录', '最近成绩', 'mai recent'})
@@ -166,40 +164,14 @@ def _draw_heatmap_card(player_name: str, heat_data: dict) -> BytesIO:
         draw.text((x + cell_w / 2, y + 42), str(count), font=cell_font, fill="#1C3546", anchor="ma")
     draw.text((60, 710), "颜色越深表示当天上传记录越多", font=small_font, fill="#63727A")
     return _card_image(image)
-@switch_source.handle()
-async def _(event: MessageEvent, message: Message = CommandArg()):
-    """
-    动态修改玩家在内存字典中指定的默认输出查分数据源
-    """
-    arg = message.extract_plain_text().strip().lower()
-    raw_qq = event.user_id
-    real_qq_str = get_real_qq(str(raw_qq))
-    # Source routing itself is local, but use the bound key when available so
-    # a later OAuth query sees the same per-user preference.
-    qqid = int(real_qq_str) if (real_qq_str and real_qq_str.isdigit()) else str(raw_qq)
-    if arg in ['落雪', 'lxns']:
-        user_source_route[qqid] = 'lxns'
-        await switch_source.finish("已成功为您指定查分默认输出为：落雪 (LXNS)", reply_message=True)
-    elif arg in ['水鱼', 'diving-fish', 'df']:
-        user_source_route[qqid] = 'diving-fish'
-        await switch_source.finish("已成功为您指定查分默认输出为：水鱼 (Diving-Fish)", reply_message=True)
-    else:
-        await switch_source.finish("参数有误，支持：「切换数据源 水鱼」或「切换数据源 落雪」", reply_message=True)
-
-
 @maimaidxhelp.handle()
 async def _(bot: Bot, event: MessageEvent):
-    real = get_real_qq(str(event.user_id))
-    qqid = int(real) if real and str(real).isdigit() else str(event.user_id)
-    current_source = user_source_route.get(qqid, maiconfig.prober_source.lower())
-    source_title = "落雪 (LXNS)" if current_source == 'lxns' else "水鱼 (Diving-Fish)"
-
     md_help = (
         "### MaimaiDX 查分助手\n"
-        f"> 当前为您生效的默认输出端：{source_title}\n\n"
+        "> 成绩数据：落雪 + 水鱼 双源自动汇总\n\n"
         "**成绩核心查分**\n"
         "• `b50` : 生成 Best 50 个人成绩图\n"
-        "• `ap50` : 生成 AP 50 成绩图 (落雪源)\n"
+        "• `ap50` : 生成 AP 50 成绩图 (落雪数据)\n"
         "• `minfo <ID>` : 查询单谱面游玩详情与分数线\n"
         "• `ginfo <ID>` : 查询单谱面全服统计图\n"
         "• `分数线 <ID> <达成率>` : 查询单谱面达成分数线\n"
@@ -210,17 +182,17 @@ async def _(bot: Bot, event: MessageEvent):
         "• `完成表` / `定数表` : 完成进度与定数信息\n\n"
         "**游戏与互动**\n"
         "• `猜歌` / `猜曲绘` / `听歌猜歌` / `别名猜歌` : 开启群内猜曲游戏\n\n"
-        "**账户与路由中心**\n"
-        "• `mai状态` : 诊断您的双端绑定状态与档案大盘\n"
-        "• `切换数据源 水鱼/落雪` : 实时修改输出端\n"
+        "**账户与数据源中心**\n"
+        "• `mai状态` : 诊断您的双端绑定与授权状态\n"
+        "• `水鱼授权` : 启用水鱼 OAuth 完整成绩参与双源汇总\n"
         "• `mai曲线` / `mai最近` / `mai热度` : 绘制落雪数据趋势走势及记录"
     )
 
     plain_help = (
         "[MaimaiDX 查分器指令字典]\n"
-        f"当前为您生效的数据源：{source_title}\n\n"
+        "成绩数据：落雪 + 水鱼 双源自动汇总\n\n"
         "· b50 : 生成 Best 50 成绩图\n"
-        "· ap50 : 生成 AP 50 成绩图\n"
+        "· ap50 : 生成 AP 50 成绩图 (落雪数据)\n"
         "· minfo <曲目ID> : 查询单曲游玩详情\n"
         "· ginfo <曲目ID> : 查询单曲全服统计图\n"
         "· 分数线 <曲目ID> <达成率> : 查询单曲分数线\n"
@@ -230,7 +202,7 @@ async def _(bot: Bot, event: MessageEvent):
         "· 完成表 / 定数表 : 查看完成表与定数表\n"
         "· 猜歌 / 猜曲绘 / 听歌猜歌 / 别名猜歌 : 开启小游戏\n"
         "· mai状态 : 诊断查分器双端绑定状态\n"
-        "· 切换数据源 <水鱼/落雪> : 修改输出端\n"
+        "· 水鱼授权 : 启用水鱼 OAuth 完整成绩参与双源汇总\n"
         "· mai曲线 / mai最近 / mai热度 : 查询落雪趋势/最近记录/热力图"
     )
 
@@ -239,10 +211,6 @@ async def _(bot: Bot, event: MessageEvent):
             [
                 {"id": "b50", "render_data.label": "生成我的 B50", "render_data.style": 1, "action.type": 2, "action.permission.type": 2, "action.data": "生成我的B50", "action.enter": True},
                 {"id": "profile", "render_data.label": "个人状态大盘", "render_data.style": 1, "action.type": 2, "action.permission.type": 2, "action.data": "个人状态大盘", "action.enter": True}
-            ],
-            [
-                {"id": "to_lx", "render_data.label": "默认切至落雪", "render_data.style": 2, "action.type": 2, "action.permission.type": 2, "action.data": "切换数据源 落雪", "action.enter": True},
-                {"id": "to_fi", "render_data.label": "默认切至水鱼", "render_data.style": 2, "action.type": 2, "action.permission.type": 2, "action.data": "切换数据源 水鱼", "action.enter": True}
             ]
         ])
         await maimaidxhelp.finish(Message(msg_segment))
@@ -277,32 +245,27 @@ async def _(bot: Bot, event: MessageEvent):
         except Exception:
             oauth_ind = "服务异常"
     
-    current_source = user_source_route.get(qqid, maiconfig.prober_source.lower())
-    source_title = "落雪 (LXNS)" if current_source == 'lxns' else "水鱼 (Diving-Fish)"
-
-    # 档案卡 Markdown 规范格式
+    # 档案卡 Markdown 规范格式（双源状态矩阵）
     md_profile = (
         f"### MaimaiDX 玩家档案\n"
         f"针对您的 QQ 账号：`{qqid}` 诊断报告：\n\n"
-        f"**当前默认输出端**\n"
-        f"• 正在使用：**{source_title}**\n\n"
-        f"**数据源绑定状态**\n"
-        f"• 落雪查分器：{lx_ind}\n"
-        f"• 水鱼公开查询：{'可用' if bind['diving_fish'] else '不可用'}\n"
-        f"• 水鱼 OAuth 配置：{oauth_config}\n"
+        f"**数据源状态（落雪 + 水鱼 双源自动汇总）**\n"
+        f"• 落雪查分器绑定：{lx_ind}\n"
+        f"• 水鱼公开查询（B50）：{'可用' if bind['diving_fish'] else '不可用'}\n"
+        f"• 水鱼 OAuth 应用配置：{oauth_config}\n"
         f"• 当前用户水鱼授权：{oauth_ind}\n\n"
         f"• OAuth 共享授权记录：{shared_oauth}\n\n"
-        f"*可使用下方按钮切换默认输出端。*"
+        f"*成绩数据由落雪与水鱼逐谱面汇总；水鱼完整成绩需本人授权。*"
     )
 
     # 档案卡 纯文本/picmenu 兼容版
     plain_profile = (
         f"【MaimaiDX 个人中心详细档案】\n"
         f"用户 QQ：{qqid}\n\n"
-        f"当前默认输出端：{source_title}\n"
-        f"落雪查分器绑定状态：{'[已绑定]' if bind['lxns'] else '[未绑定]'}\n"
-        f"水鱼公开查询：{'可用' if bind['diving_fish'] else '不可用'}\n"
-        f"水鱼 OAuth 配置：{oauth_config}\n"
+        f"数据源状态（双源自动汇总）：\n"
+        f"落雪查分器绑定：{'[已绑定]' if bind['lxns'] else '[未绑定]'}\n"
+        f"水鱼公开查询（B50）：{'可用' if bind['diving_fish'] else '不可用'}\n"
+        f"水鱼 OAuth 应用配置：{oauth_config}\n"
         f"当前用户水鱼授权：{oauth_ind}\n\n"
         f"OAuth 共享授权记录：{shared_oauth}\n\n"
         f"• 提示：需要完整水鱼成绩时先发送「水鱼授权」。"
@@ -310,10 +273,6 @@ async def _(bot: Bot, event: MessageEvent):
 
     if is_official_bot(bot.self_id):
         msg_segment = _build_markdown_segment(md_profile, [
-            [
-                {"id": "set_lxns", "render_data.label": "默认设为落雪", "render_data.style": 2, "action.type": 2, "action.permission.type": 2, "action.data": "切换数据源 落雪", "action.enter": True},
-                {"id": "set_fish", "render_data.label": "默认设为水鱼", "render_data.style": 2, "action.type": 2, "action.permission.type": 2, "action.data": "切换数据源 水鱼", "action.enter": True}
-            ],
             [
                 {"id": "v_curve", "render_data.label": "趋势折线图", "render_data.style": 1, "action.type": 2, "action.permission.type": 2, "action.data": "mai曲线", "action.enter": True}
             ],
@@ -331,13 +290,10 @@ async def _(bot: Bot, event: MessageEvent):
 async def _(bot: Bot, event: MessageEvent):
     """
     【向外拓展：Rating 历史变动趋势折线图】
-    仅在用户将当前输出源切换为落雪时提供支持
+    落雪特供功能（趋势数据来自落雪开放平台）
     """
     qqid = await _require_bound(render_curve, event)
-    current_source = user_source_route.get(qqid, maiconfig.prober_source.lower())
-    if current_source != 'lxns':
-        await render_curve.finish("趋势历史曲线目前仅支持落雪数据源，请先切换数据源为落雪。", reply_message=True)
-        
+
     try:
         curves = await maiApi.get_lxns_rating_curves(qqid)
     except Exception as exc:
@@ -363,10 +319,7 @@ async def _(bot: Bot, event: MessageEvent):
     使用落雪 API: GET /maimai/player/qq/{qq}/recents
     """
     qqid = await _require_bound(render_recent, event)
-    current_source = user_source_route.get(qqid, maiconfig.prober_source.lower())
-    if current_source != 'lxns':
-        await render_recent.finish("最近游玩记录目前仅支持落雪数据源，请先切换数据源为落雪。", reply_message=True)
-    
+
     try:
         import httpx
         headers = {"Authorization": maiconfig.lxnstoken}
@@ -410,10 +363,7 @@ async def _(bot: Bot, event: MessageEvent):
     使用落雪 API: GET /maimai/player/{friend_code}/heatmap
     """
     qqid = await _require_bound(render_heatmap, event)
-    current_source = user_source_route.get(qqid, maiconfig.prober_source.lower())
-    if current_source != 'lxns':
-        await render_heatmap.finish("热力图目前仅支持落雪数据源，请先切换数据源为落雪。", reply_message=True)
-    
+
     try:
         import httpx
         headers = {"Authorization": maiconfig.lxnstoken}

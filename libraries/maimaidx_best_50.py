@@ -17,6 +17,7 @@ from .maimaidx_model import ChartInfo, PlayInfoDefault, PlayInfoDev, UserInfo
 from .maimaidx_music import mai
 from ..release010_import import format_user_error
 from .attribution import draw_attribution
+from .maimaidx_merge import effective_source
 from .maimaidx_types import SourceName, normalize_source
 
 
@@ -173,20 +174,21 @@ class ScoreBaseImage:
 
 class DrawBest(ScoreBaseImage):
 
-    def __init__(self, UserInfo: UserInfo, qqid: Optional[Union[int, str]] = None, is_ap: bool = False, source: SourceName | str = "lxns") -> None:
+    def __init__(self, UserInfo: UserInfo, qqid: Optional[Union[int, str]] = None, is_ap: bool = False, source: SourceName | str = "merged") -> None:
         super().__init__(Image.open(maidir / 'b50_bg.png').convert('RGBA'))
         self.userName = UserInfo.nickname
         self.plate = UserInfo.plate
         self.lxns_icon = UserInfo.username
         self.addRating = UserInfo.additional_rating
         self.Rating = UserInfo.rating
-        
+
         self.sdBest = [c for c in (UserInfo.charts.sd or []) if c.level_index <= 4]
         self.dxBest = [c for c in (UserInfo.charts.dx or []) if c.level_index <= 4]
-        
+
         self.qqid = qqid
         self.is_ap = is_ap
-        self.source = normalize_source(source)
+        # "merged" 是双源汇总的署名标注，不能被 normalize_source 归一成单源
+        self.source = source if source == "merged" else normalize_source(source)
 
     def _findRaPic(self) -> str:
         if self.Rating < 1000: return '01'
@@ -356,14 +358,12 @@ async def generate(
     qqid: Optional[int] = None,
     username: Optional[str] = None,
     *,
-    source: SourceName | str,
     is_ap: bool = False,
 ) -> MessageSegment:
     if username:
         qqid = None
-    selected = normalize_source(source)
-    userinfo = await maiApi.query_user_b50(qqid=qqid, username=username, source=selected, is_ap=is_ap)
-        
+    userinfo, meta = await maiApi.query_user_b50_merged(qqid=qqid, username=username, is_ap=is_ap)
+
     for chart in (userinfo.charts.sd or []) + (userinfo.charts.dx or []):
         music = _find_local_chart_music(chart.song_id, chart.type)
         if music:
@@ -380,5 +380,5 @@ async def generate(
         if not chart.ds:
             log.warning(f"[b50] 未找到定数: song_id={chart.song_id}, level_index={chart.level_index}, type={chart.type}")
 
-    draw_best = DrawBest(userinfo, qqid, is_ap, selected)
+    draw_best = DrawBest(userinfo, qqid, is_ap, effective_source(meta))
     return MessageSegment.image(image_to_base64(await draw_best.draw()))

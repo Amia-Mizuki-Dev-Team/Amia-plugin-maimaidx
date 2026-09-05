@@ -40,9 +40,9 @@ __plugin_meta__ = PluginMetadata(
         "· minfo <曲目ID> : 查询单谱面详细游玩成绩与分数线\n\n"
         "· 水鱼授权 / 水鱼授权状态 : 授权或检查水鱼完整成绩权限\n"
         "· 水鱼筛选 <key=value> : 使用水鱼服务端筛选本人成绩\n\n"
-        "【⚙️ 个人中心与路由】\n"
-        "· mai状态 : 诊断双端绑定，管理默认数据源\n"
-        "· 切换数据源 <水鱼/落雪> : 切换默认输出端\n"
+        "【⚙️ 个人中心与数据源】\n"
+        "· mai状态 : 诊断双端绑定与授权状态\n"
+        "· 成绩数据：落雪 + 水鱼 双源逐谱面自动汇总\n"
         "· mai曲线 : 【落雪特供】绘制 Rating 历史趋势走势折线图"
     ),
     type='application',
@@ -58,14 +58,14 @@ __plugin_meta__ = PluginMetadata(
                 "trigger_method": "指令",
                 "trigger_condition": "b50 / ap50 / minfo",
                 "brief_des": "Maimai DX 成绩查询与出图",
-                "detail_des": "支持落雪和水鱼双端数据源的B50生成及单曲数据查询"
+                "detail_des": "落雪与水鱼双源逐谱面汇总的B50生成及单曲数据查询"
             },
             {
-                "func": "账户与路由设置",
+                "func": "账户与数据源设置",
                 "trigger_method": "指令",
-                "trigger_condition": "mai状态 / 切换数据源",
-                "brief_des": "管理双端绑定与查分源",
-                "detail_des": "诊断落雪与水鱼绑定状态，支持动态切置全局缺省查分路由"
+                "trigger_condition": "mai状态 / 水鱼授权",
+                "brief_des": "管理双端绑定与授权状态",
+                "detail_des": "诊断落雪与水鱼绑定状态，展示双源授权状态矩阵"
             }
         ],
     }
@@ -85,7 +85,9 @@ async def get_music():
         f"[maimaidx] DivingFish OAuth configured={maiApi.oauth_configured}, "
         f"client_id=****{maiconfig.diving_fish_oauth_client_id[-4:] if maiconfig.diving_fish_oauth_client_id else 'EMPTY'}"
     )
-    log.info(f"MaimaiDX 数据服务总闸启动就绪。当前系统环境指配全局缺省路由为: [ {maiconfig.prober_source} ]")
+    log.info(
+        "MaimaiDX 数据服务总闸启动就绪。成绩数据已启用 落雪 + 水鱼 双源逐谱面自动汇总模式。"
+    )
     
     # 触发双源聚合全量同步（同时向落雪与水鱼拉取歌曲/别名，增量同步曲绘）
     log.info('执行远端全量歌曲大库、跨端特色别名库及本地曲绘自愈补全...')

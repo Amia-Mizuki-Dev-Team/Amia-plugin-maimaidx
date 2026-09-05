@@ -24,26 +24,23 @@ class UserNotFoundError(MaimaiError):
     def __init__(self, source: str | None = None):
         """Keep a selected-source miss distinguishable from a bind failure.
 
-        B50 deliberately does not fall back to the other provider: a user may
-        have different records or privacy settings on LXNS and Diving-Fish.
-        Carrying the provider into the expected error makes that choice clear
-        instead of making a successful qbind lookup look like a broken bind.
-        Callers outside the source-aware B50 path keep the original wording.
+        双源汇总已同时查询落雪与水鱼：携带数据源的未找到错误用于区分
+        “该源没有此玩家”与“绑定关系缺失”，而不是提示用户切换数据源。
+        Callers outside the source-aware merged path keep the original wording.
         """
         super().__init__()
         source_key = str(source or "").strip().lower().replace("_", "-")
         self.source = source_key or None
         labels = {
-            "lxns": ("落雪（LXNS）", "水鱼"),
-            "diving-fish": ("水鱼（Diving-Fish）", "落雪"),
+            "lxns": "落雪（LXNS）",
+            "diving-fish": "水鱼（Diving-Fish）",
         }
-        label_data = labels.get(source_key)
-        if label_data:
-            label, other_name = label_data
+        label = labels.get(source_key)
+        if label:
             self.hx_reason = f"{label}没有找到对应的舞萌玩家数据。"
             self.hx_suggestion = (
-                f"当前只查询{label}；如果成绩在{other_name}，请先发送「切换数据源 "
-                f"{other_name}」后重试。"
+                "双源汇总查询已同时覆盖落雪与水鱼；请确认该玩家已完成绑定"
+                "（水鱼完整成绩还需本人授权）后重试。"
             )
 
 
@@ -207,9 +204,9 @@ class MaimaiResourceError(MaimaiError):
 
 class SourceNotSupportedError(MaimaiError):
     hx_code = "HX-MAI-005"
-    hx_reason = "AP50 目前只支持落雪查分器。"
-    hx_suggestion = "请先发送「切换数据源 落雪」，再重新查询 AP50。"
-    hx_cause = "水鱼开发者接口不提供 AP50 数据。"
+    hx_reason = "AP50 目前只支持落雪数据源。"
+    hx_suggestion = "水鱼不提供 AP50 数据；请确认落雪绑定后重试。"
+    hx_cause = "水鱼侧没有 AP50 汇总数据，AP 查询仅支持落雪。"
     user_expected = True
 
 
