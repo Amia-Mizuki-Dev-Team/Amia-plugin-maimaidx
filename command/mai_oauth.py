@@ -67,27 +67,27 @@ def _authorization_message(device, *, reason: str, bot: Bot | None = None):
     expires_minutes = max(1, device.expires_in // 60)
     url = str(device.verification_uri_complete or device.verification_uri)
     plain = (
-        f"{reason}需要本人先授权水鱼查分，请打开：\n"
-        f"{url}\n"
-        f"用户码：{device.user_code}（约 {expires_minutes} 分钟有效）\n"
-        "完成后重新发送刚才的命令即可。"
+        f"🔐 水鱼查分器授权绑定\n\n"
+        f"📋 请点击下方按钮打开授权链接\n\n"
+        f"⏰ 链接有效期 {expires_minutes} 分钟\n"
+        f"⚠️ 此链接仅当前用户可用\n\n"
+        f"用户码：{device.user_code}"
     )
     if not _markdown_enabled(bot):
         return plain
 
     content = (
-        "### 水鱼 OAuth 授权\n\n"
-        f"{reason}需要本人确认水鱼账号授权。\n\n"
-        f"**用户码**：`{device.user_code}`\n\n"
-        f"**有效期**：约 {expires_minutes} 分钟\n\n"
-        "点击下方按钮打开官方授权页，完成登录和确认后，再点击「检查授权状态」。\n\n"
-        f"备用链接：[打开水鱼授权页]({url})"
+        f"### 🔐 水鱼查分器授权绑定\n\n"
+        f"> 📋 请点击下方按钮打开授权链接\n\n"
+        f"> ⏰ 链接有效期 {expires_minutes} 分钟\n"
+        f"> ⚠️ 此链接仅当前用户可用\n\n"
+        f"用户码：`{device.user_code}`"
     )
     buttons = [
         [
             {
                 "id": "waterfish_oauth_open",
-                "render_data.label": "打开水鱼授权页",
+                "render_data.label": "打开授权链接",
                 "render_data.style": 1,
                 "action.type": 0,
                 "action.permission.type": 2,
