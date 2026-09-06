@@ -13,7 +13,6 @@ from ..dependencies import build_markdown_segment as _build_markdown_segment, ge
 from PIL import Image, ImageDraw, ImageFont
 from ..config import SIYUAN
 from ..release010_import import send_error_with_diagnostic
-from ..libraries.maimaidx_error import OAuthConsentRequiredError
 
 # 指令注册总览
 maimaidxhelp = on_command('mai帮助', aliases={'帮助maimaiDX', '帮助maimaidx'}, priority=5, block=True)
@@ -184,7 +183,7 @@ async def _(bot: Bot, event: MessageEvent):
         "• `猜歌` / `猜曲绘` / `听歌猜歌` / `别名猜歌` : 开启群内猜曲游戏\n\n"
         "**账户与数据源中心**\n"
         "• `mai状态` : 诊断您的双端绑定与授权状态\n"
-        "• `水鱼授权` : 启用水鱼 OAuth 完整成绩参与双源汇总\n"
+        "• `绑定水鱼` : 通过 sync 插件完成水鱼 OAuth 绑定\n"
         "• `mai曲线` / `mai最近` / `mai热度` : 绘制落雪数据趋势走势及记录"
     )
 
@@ -202,7 +201,7 @@ async def _(bot: Bot, event: MessageEvent):
         "· 完成表 / 定数表 : 查看完成表与定数表\n"
         "· 猜歌 / 猜曲绘 / 听歌猜歌 / 别名猜歌 : 开启小游戏\n"
         "· mai状态 : 诊断查分器双端绑定状态\n"
-        "· 水鱼授权 : 启用水鱼 OAuth 完整成绩参与双源汇总\n"
+        "· 绑定水鱼 : 通过 sync 插件完成水鱼 OAuth 绑定\n"
         "· mai曲线 / mai最近 / mai热度 : 查询落雪趋势/最近记录/热力图"
     )
 
@@ -233,17 +232,13 @@ async def _(bot: Bot, event: MessageEvent):
         return
     lx_ind = "已绑定" if bind["lxns"] else "未绑定"
     oauth_config = "已配置" if maiApi.oauth_configured else "未配置"
-    shared_oauth = "已写入" if bind.get("diving_fish_oauth") else "未写入"
-    if not maiApi.oauth_configured:
-        oauth_ind = "未授权"
+    fish_binding = bind.get("fish_binding_type", "none")
+    if fish_binding == "oauth":
+        oauth_ind = "已授权"
+    elif fish_binding == "import_token":
+        oauth_ind = "旧版绑定（需重新绑定）"
     else:
-        try:
-            await maiApi.oauth.get_access_token(maiApi.oauth_subject(qqid=qqid))
-            oauth_ind = "已授权"
-        except OAuthConsentRequiredError:
-            oauth_ind = "未授权"
-        except Exception:
-            oauth_ind = "服务异常"
+        oauth_ind = "未绑定"
     
     # 档案卡 Markdown 规范格式（双源状态矩阵）
     md_profile = (
@@ -264,7 +259,7 @@ async def _(bot: Bot, event: MessageEvent):
         f"落雪查分器绑定：{'[已绑定]' if bind['lxns'] else '[未绑定]'}\n"
         f"水鱼公开查询（B50）：{'可用' if bind['diving_fish'] else '不可用'}\n"
         f"当前用户水鱼授权：{oauth_ind}\n\n"
-        f"• 提示：需要完整水鱼成绩时先发送「水鱼授权」。"
+        f"• 提示：需要完整水鱼成绩时先发送「绑定水鱼」。"
     )
 
     if is_official_bot(bot.self_id):

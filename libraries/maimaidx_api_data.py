@@ -18,11 +18,6 @@ from .maimaidx_error import (
 )
 from .maimaidx_model import ChartInfo
 from .diving_fish_oauth import DivingFishOAuth
-from .maimaidx_oauth_binding import (
-    OAUTH_BINDING_KEY,
-    build_oauth_binding,
-    is_authorized_oauth_binding,
-)
 
 # ==========================================
 # 落雪 / 水鱼 API 共享常量
@@ -37,6 +32,39 @@ def _mask_identity(value: str) -> str:
     if len(value) <= 4:
         return "用户 " + "*" * len(value)
     return f"QQ {value[:2]}{'*' * max(2, len(value) - 4)}{value[-2:]}"
+
+
+def _is_fish_oauth(token: str | None) -> bool:
+    """检查 user_binds.fish 是否为 OAuth subject_ref（64位hex字符串）。
+    True = OAuth 绑定，False = Import-Token 绑定或未绑定。"""
+    if not token or len(token) != 64:
+        return False
+    try:
+        int(token, 16)
+        return True
+    except ValueError:
+        return False
+
+
+async def _get_fish_binding(qqid: int) -> tuple[str | None, bool]:
+    """读 user_binds.fish，返回 (token_or_none, is_oauth)。
+    经 Manage 门面读取，Manage 不可用时回退 maimaidx 自己的 dependencies.get_user_bind_async。"""
+    from ..dependencies import get_bind as _manage_get_bind
+    if _manage_get_bind is not None:
+        try:
+            binds = await _manage_get_bind(str(qqid))
+            fish = binds.get("fish") if binds else None
+            return fish, _is_fish_oauth(fish)
+        except Exception:
+            pass
+    # 回退：直接读 sync 的 get_user_bind_async（dependencies.py 已加载 maimai_sync）
+    try:
+        from ..dependencies import get_user_bind_async
+        binds = await get_user_bind_async(str(qqid))
+        fish = binds.get("fish") if binds else None
+        return fish, _is_fish_oauth(fish)
+    except Exception:
+        return None, False
 
 
 def _log_score_breakpoint(
@@ -137,46 +165,6 @@ class MaiApi:
             raise UserNotFoundError()
         return self.oauth.subject_ref(str(qqid))
 
-    async def request_device_authorization(self, external_id: str | int) -> Any:
-        subject = self.oauth.subject_ref(str(external_id))
-        label = _mask_identity(str(external_id))
-        return await self.oauth.request_device_authorization(subject, label)
-
-    async def check_oauth_authorization(self, qqid: int) -> bool:
-        subject = self.oauth_subject(qqid=qqid)
-        await self.oauth.get_access_token(subject)
-        await self.remember_oauth_authorization(str(qqid))
-        return True
-
-    async def remember_oauth_authorization(
-        self, external_id: str, *, authorized: bool = True
-    ) -> bool:
-        """Share consent metadata through the existing maimai_sync row.
-
-        The access token itself remains in ``DivingFishOAuth``'s process-local
-        cache.  This method is intentionally best-effort for normal queries:
-        a temporary DB outage must not turn an otherwise successful score
-        response into a second user-facing error.  The explicit status
-        command uses the returned value to tell the user when another plugin
-        may not see the authorization yet.
-        """
-
-        try:
-            from ..dependencies import get_user_bind_async, save_user_bind
-
-            value = (
-                build_oauth_binding(self.oauth, str(external_id))
-                if authorized
-                else None
-            )
-            await save_user_bind(str(external_id), OAUTH_BINDING_KEY, value)
-            if not authorized:
-                return True
-            binds = await get_user_bind_async(str(external_id))
-            return is_authorized_oauth_binding(binds.get(OAUTH_BINDING_KEY))
-        except Exception:
-            return False
-
     # ==========================================
     # 落雪 API 方法
     # ==========================================
@@ -190,9 +178,6 @@ class MaiApi:
             if binds:
                 status["db_fish"] = bool(binds.get("fish"))
                 status["db_lxns"] = bool(binds.get("lxns"))
-                status["db_fish_oauth"] = is_authorized_oauth_binding(
-                    binds.get(OAUTH_BINDING_KEY)
-                )
                 status["db_user_type"] = binds.get("Type")
         except Exception:
             pass
@@ -206,10 +191,6 @@ class MaiApi:
         status = {
             "lxns": False,
             "diving_fish": False,
-            # This is deliberately separate from the public B50 endpoint:
-            # public availability does not imply that the current user has
-            # granted OAuth access to protected records.
-            "diving_fish_oauth": False,
         }
         
         # 策略一：远程 API 实时查询
@@ -229,18 +210,18 @@ class MaiApi:
                 log.error(f"中继探测水鱼绑定状态发生网络断流: {e}")
         
         # 策略二：远程 API 未查到时，回退 maimai_sync 数据库
-        # Always read the shared row once.  The OAuth marker is independent
-        # from public waterfish availability, so it must not be skipped when
-        # both public probes happen to succeed.
         try:
             db_status = await self._get_db_bind_status(qqid)
             if db_status.get("db_lxns") and not status["lxns"]:
                 status["lxns"] = True
             if db_status.get("db_fish") and not status["diving_fish"]:
                 status["diving_fish"] = True
-            status["diving_fish_oauth"] = bool(db_status.get("db_fish_oauth"))
         except Exception:
             pass
+
+        # 读取 user_binds.fish 判断水鱼绑定类型（OAuth / Import-Token / 未绑定）
+        fish, is_oauth = await _get_fish_binding(qqid)
+        status["fish_binding_type"] = "oauth" if is_oauth else ("import_token" if fish else "none")
         
         return status
 
@@ -444,7 +425,6 @@ class MaiApi:
         async def _fetch_fish():
             subject = self.oauth_subject(qqid=qqid)
             records = await self.query_player_record(subject, str(music_id))
-            await self.remember_oauth_authorization(str(qqid))
             return records
 
         lxns_res, fish_res = await asyncio.gather(
@@ -922,22 +902,15 @@ class MaiApi:
     # routing every protected request through OAuth-only endpoints.
     async def query_user_plate(self, qqid: int, version: list, username: Optional[str] = None) -> list:
         subject = self.oauth_subject(qqid=qqid, username=username)
-        records = await self.query_player_plate(subject, version)
-        if username is None:
-            await self.remember_oauth_authorization(str(qqid))
-        return records
+        return await self.query_player_plate(subject, version)
 
     async def query_user_post_dev(self, qqid: int, music_id: str) -> Optional[list]:
         subject = self.oauth_subject(qqid=qqid)
-        records = await self.query_player_record(subject, music_id)
-        await self.remember_oauth_authorization(str(qqid))
-        return records
+        return await self.query_player_record(subject, music_id)
 
     async def query_user_get_dev(self, qqid: Optional[int] = None, username: Optional[str] = None) -> Any:
         subject = self.oauth_subject(qqid=qqid, username=username)
         raw = await self.query_player_records(subject)
-        if qqid is not None and username is None:
-            await self.remember_oauth_authorization(str(qqid))
         if isinstance(raw, list):
             return list(raw)
         return [

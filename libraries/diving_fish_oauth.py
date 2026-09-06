@@ -28,9 +28,8 @@ from .maimaidx_error import (
 
 
 AUTH_BASE = "https://auth.diving-fish.com"
-DEVICE_AUTHORIZATION_PATH = "/oauth/device_authorization"
 TOKEN_PATH = "/oauth/token"
-DEFAULT_SCOPE = "prober.records.read"
+DEFAULT_SCOPE = "prober.records.read prober.records.write"
 TOKEN_EXPIRY_SKEW = 30.0
 
 # Public type alias kept deliberately small: the server treats the subject as
@@ -48,16 +47,6 @@ def build_subject_ref(client_id: str, external_id: str) -> str:
     """Return the long-term OAuth subject used by the token endpoint."""
 
     return f"ref:{subject_digest(client_id, external_id)}"
-
-
-@dataclass(frozen=True)
-class DeviceAuthorization:
-    device_code: str
-    user_code: str
-    verification_uri: str
-    verification_uri_complete: str
-    expires_in: int
-    interval: int = 5
 
 
 @dataclass(frozen=True)
@@ -172,58 +161,6 @@ class DivingFishOAuth:
         except httpx.HTTPError as exc:
             raise ServerError() from exc
         return response
-
-    async def request_device_authorization(
-        self,
-        subject: str,
-        binding_label: str,
-    ) -> DeviceAuthorization:
-        """Create a device binding link for a self-owned subject.
-
-        The device endpoint expects the raw 64-character digest in
-        ``subject_ref``; the token endpoint later uses the same value with a
-        ``ref:`` prefix.  Accepting either form here prevents callers from
-        accidentally duplicating the prefix.
-        """
-
-        subject_value = str(subject).strip()
-        if subject_value.startswith("ref:"):
-            subject_value = subject_value[4:]
-        if len(subject_value) != 64 or any(
-            char not in "0123456789abcdef" for char in subject_value
-        ):
-            raise OAuthConfigurationError()
-        safe_label = " ".join(str(binding_label or "").split())[:64]
-        response = await self._post_form(
-            DEVICE_AUTHORIZATION_PATH,
-            {
-                "client_id": self.client_id,
-                "client_secret": self.client_secret,
-                "scope": self.scope,
-                "subject_ref": subject_value,
-                "binding_label": safe_label,
-            },
-        )
-        data = self._json(response)
-        if response.status_code >= 400:
-            self._raise_oauth_error(response, data)
-        try:
-            verification_uri = data.get("verification_uri", data.get("verification_url"))
-            verification_complete = data.get(
-                "verification_uri_complete", data.get("verification_url_complete", verification_uri)
-            )
-            if not verification_uri or not verification_complete:
-                raise KeyError("verification_uri")
-            return DeviceAuthorization(
-                device_code=str(data["device_code"]),
-                user_code=str(data["user_code"]),
-                verification_uri=str(verification_uri),
-                verification_uri_complete=str(verification_complete),
-                expires_in=int(data.get("expires_in", 600)),
-                interval=int(data.get("interval", 5)),
-            )
-        except (KeyError, TypeError, ValueError) as exc:
-            raise MaimaiDataFormatError() from exc
 
     async def _exchange(self, subject: str) -> _CachedToken:
         response = await self._post_form(

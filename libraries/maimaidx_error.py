@@ -86,7 +86,7 @@ class OAuthConsentRequiredError(MaimaiError):
 
     hx_code = "HX-MAI-005"
     hx_reason = "这位玩家还没有授权水鱼查分。"
-    hx_suggestion = "请让要查询的玩家发送「水鱼授权」，完成后再试。"
+    hx_suggestion = "请让要查询的玩家发送「绑定水鱼」，完成后再试。"
     hx_cause = "OAuth 授权服务器返回 consent_required。"
     user_expected = True
 

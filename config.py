@@ -64,7 +64,7 @@ class Config(BaseModel):
         ),
     )
     diving_fish_oauth_scope: str = Field(
-        default="prober.records.read",
+        default="prober.records.read prober.records.write",
         validation_alias=AliasChoices(
             "diving_fish_oauth_scope",
             "DIVING_FISH_OAUTH_SCOPE",

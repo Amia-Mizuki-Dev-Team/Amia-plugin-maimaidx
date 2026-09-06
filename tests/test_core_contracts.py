@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-import json
 import sys
 import unittest
 from types import SimpleNamespace
@@ -19,11 +17,6 @@ from libraries.maimaidx_types import (  # noqa: E402
 )
 from libraries.score_line import calculate_score_line  # noqa: E402
 from libraries.attribution import attribution_text, draw_attribution  # noqa: E402
-from libraries.maimaidx_oauth_binding import (  # noqa: E402
-    build_oauth_binding,
-    is_authorized_oauth_binding,
-    normalize_oauth_binding,
-)
 from release010_import import _sanitize, format_user_error  # noqa: E402
 
 
@@ -77,32 +70,6 @@ class MaimaiCoreContractTests(unittest.TestCase):
         )
         for value in ("secret-value", "bearer-value", "device-value", "header-value"):
             self.assertNotIn(value, text)
-
-    def test_oauth_binding_persists_consent_without_tokens(self):
-        class FakeOAuth:
-            client_id = "public-client"
-            scope = "prober.records.read"
-
-            @staticmethod
-            def subject_ref(external_id):
-                digest = hashlib.sha256(
-                    f"public-client:{external_id}".encode("utf-8")
-                ).hexdigest()
-                return f"ref:{digest}"
-
-        binding = build_oauth_binding(FakeOAuth(), "999999999", now=1_700_000_000)
-        self.assertTrue(is_authorized_oauth_binding(binding))
-        stored = json.dumps(
-            {**binding, "access_token": "must-not-be-stored", "device_code": "nope"}
-        )
-        normalized = normalize_oauth_binding(stored)
-        self.assertIsNotNone(normalized)
-        self.assertNotIn("access_token", normalized)
-        self.assertNotIn("device_code", normalized)
-        self.assertEqual(normalized["subject_ref"], binding["subject_ref"])
-
-        revoked = dict(binding, status="revoked")
-        self.assertFalse(is_authorized_oauth_binding(revoked))
 
     def test_score_line_uses_target_rate_and_break_50(self):
         music = SimpleNamespace(

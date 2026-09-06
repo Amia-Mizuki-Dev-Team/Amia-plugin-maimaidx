@@ -38,7 +38,7 @@ __plugin_meta__ = PluginMetadata(
         "· b50 : 生成 Best 50 个人成绩精美大图\n"
         "· ap50 : 生成纯 AP 状态的收曲成就大图\n"
         "· minfo <曲目ID> : 查询单谱面详细游玩成绩与分数线\n\n"
-        "· 水鱼授权 / 水鱼授权状态 : 授权或检查水鱼完整成绩权限\n"
+        "· 水鱼授权状态 : 检查水鱼 OAuth 授权状态\n"
         "· 水鱼筛选 <key=value> : 使用水鱼服务端筛选本人成绩\n\n"
         "【⚙️ 个人中心与数据源】\n"
         "· mai状态 : 诊断双端绑定与授权状态\n"
@@ -63,7 +63,7 @@ __plugin_meta__ = PluginMetadata(
             {
                 "func": "账户与数据源设置",
                 "trigger_method": "指令",
-                "trigger_condition": "mai状态 / 水鱼授权",
+                "trigger_condition": "mai状态 / 水鱼授权状态",
                 "brief_des": "管理双端绑定与授权状态",
                 "detail_des": "诊断落雪与水鱼绑定状态，展示双源授权状态矩阵"
             }

@@ -22,7 +22,6 @@ from ..libraries.maimaidx_error import OAuthConsentRequiredError, MaimaiRequestE
 from ..libraries.maimaidx_player_score import DrawScore
 from ..libraries.image import image_to_base64, tricolor_gradient
 from ..release010_import import send_error_with_diagnostic
-from .mai_oauth import send_authorization_prompt
 
 
 waterfish_filter = on_command("水鱼筛选", aliases={"mai筛选", "df筛选"})
@@ -110,7 +109,6 @@ async def _(bot: Bot, event: MessageEvent, message: Message = CommandArg()):
         raw_payload = await maiApi.query_player_records(
             _subject(external_id), filters=parsed.query_params()
         )
-        await maiApi.remember_oauth_authorization(external_id)
         raw_records, echoed = extract_response_records(raw_payload)
         if echoed_keys(echoed) < parsed.keys:
             from ..libraries.maimaidx_error import MaimaiDataFormatError
@@ -132,8 +130,9 @@ async def _(bot: Bot, event: MessageEvent, message: Message = CommandArg()):
             MessageSegment.image(image_to_base64(image)), reply_message=True
         )
     except OAuthConsentRequiredError:
-        await send_authorization_prompt(
-            waterfish_filter, external_id, reason="水鱼筛选", bot=bot
+        await waterfish_filter.finish(
+            "水鱼完整成绩需要 OAuth 授权，请发送「绑定水鱼」。",
+            reply_message=True,
         )
     except FilterParseError as exc:
         await waterfish_filter.finish(str(exc), reply_message=True)

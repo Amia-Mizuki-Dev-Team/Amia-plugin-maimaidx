@@ -26,7 +26,6 @@ from ..release010_import import (
     format_user_error,
     send_error_with_diagnostic,
 )
-from .mai_oauth import send_authorization_prompt
 
 try:
     from ..libraries.maimaidx_player_score import music_global_data, player_score_data, score_line_data
@@ -221,7 +220,7 @@ async def _(bot: Bot, event: MessageEvent, message: Message = CommandArg(), user
         data, meta = await player_score_data(qqid, music)
         tip_text = f"\n当前数据源：{sources_label(meta)}。"
         if fish_consent_missing(meta):
-            tip_text += "发送「水鱼授权」可启用双源汇总。"
+            tip_text += "发送「绑定水鱼」可启用双源汇总。"
         await minfo.finish(data + MessageSegment.text(tip_text), reply_message=True)
     except FinishedException:
         raise
@@ -229,10 +228,13 @@ async def _(bot: Bot, event: MessageEvent, message: Message = CommandArg(), user
         log.warning(f"[minfo] 成绩获取失败断点: qq={qqid} 水鱼 OAuth 尚未授权 (OAuthConsentRequiredError)")
         if user_id is not None:
             await minfo.finish(
-                "指定玩家还没有授权水鱼，请让对方本人发送「水鱼授权」。",
+                "指定玩家还没有授权水鱼，请让对方本人发送「绑定水鱼」。",
                 reply_message=True,
             )
-        await send_authorization_prompt(minfo, str(qqid), reason="单曲查分", bot=bot)
+        await minfo.finish(
+            "水鱼完整成绩需要 OAuth 授权，请发送「绑定水鱼」。",
+            reply_message=True,
+        )
     except MaimaiError as e:
         await send_error_with_diagnostic(minfo, e, "MAI", context="minfo")
     except Exception as e:

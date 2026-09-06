@@ -254,7 +254,6 @@ class MaimaidxDataProvider:
         raw_records = await maiApi.query_player_records(
             subject, filters=_server_filters(query)
         )
-        await maiApi.remember_oauth_authorization(str(qq))
         if raw_records is None:
             return []
         if isinstance(raw_records, dict):

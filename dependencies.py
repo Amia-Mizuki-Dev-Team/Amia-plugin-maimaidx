@@ -98,6 +98,10 @@ load_env_layers = getattr(_manage, "load_env_layers", None)
 if load_env_layers is None:
     raise RuntimeError("maimai_manage 缺少公共 API: load_env_layers")
 
+# Manage facade 的绑定查询函数（运行时使用）。
+# Manage 版本过旧没有 get_bind 时为 None，运行时回退 get_user_bind_async。
+get_bind = getattr(_manage, "get_bind", None)
+
 # Keep the developer-provided API available to consumers when the installed
 # sync version exports it, without making older compatible versions fail to
 # import maimaidx for unused helpers.

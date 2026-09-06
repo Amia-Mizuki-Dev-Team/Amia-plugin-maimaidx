@@ -164,7 +164,6 @@ async def _legacy_draw_music_play_data(qqid: int, music_id: str) -> Union[str, M
             data = await maiApi.query_player_record(
                 maiApi.oauth_subject(qqid=qqid), music_id
             )
-            await maiApi.remember_oauth_authorization(str(qqid))
             if not data:
                 raise MusicNotPlayError
 
@@ -397,7 +396,6 @@ async def draw_music_play_data(
             records = await maiApi.query_player_record(
                 maiApi.oauth_subject(qqid=qqid), str(music.id)
             )
-            await maiApi.remember_oauth_authorization(str(qqid))
     return await render_music_play_data(music, records or [], selected)
 
 

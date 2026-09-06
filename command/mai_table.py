@@ -8,7 +8,6 @@ from nonebot.permission import SUPERUSER
 
 from ..dependencies import get_at_user_id, get_real_qq
 from ..libraries.maimaidx_error import OAuthConsentRequiredError
-from .mai_oauth import send_authorization_prompt
 from ..release010_import import send_error_with_diagnostic
 
 from ..libraries.maimaidx_music_info import *
@@ -88,10 +87,10 @@ async def _(bot: Bot, event: MessageEvent, match = RegexMatched()):
         try:
             pic = await draw_rating_table(qqid, ra, True if plan and plan.lower() in comboRank else False)
         except OAuthConsentRequiredError:
-            await send_authorization_prompt(
-                rating_table_pfm, str(qqid), reason="完成表", bot=bot
+            await rating_table_pfm.finish(
+                "水鱼完整成绩需要 OAuth 授权，请发送「绑定水鱼」。",
+                reply_message=True,
             )
-            return
         except Exception as exc:
             await send_error_with_diagnostic(rating_table_pfm, exc, "MAI", context="完成表")
             return
@@ -117,10 +116,10 @@ async def _(bot: Bot, event: MessageEvent, match = RegexMatched()):
     try:
         pic = await draw_plate_table(qqid, ver, plan)
     except OAuthConsentRequiredError:
-        await send_authorization_prompt(
-            plate_table_pfm, str(qqid), reason="牌子进度", bot=bot
+        await plate_table_pfm.finish(
+            "水鱼完整成绩需要 OAuth 授权，请发送「绑定水鱼」。",
+            reply_message=True,
         )
-        return
     except Exception as exc:
         await send_error_with_diagnostic(plate_table_pfm, exc, "MAI", context="牌子进度")
         return
@@ -147,12 +146,12 @@ async def _(bot: Bot, event: MessageEvent, match = RegexMatched(), user_id: Opti
         data = await rise_score_data(qqid, username, rating, score)
     except OAuthConsentRequiredError:
         if username:
-            await rise_score.finish("指定用户名还没有授权水鱼，请让该用户本人发送「水鱼授权」。", reply_message=True)
+            await rise_score.finish("指定用户名还没有授权水鱼，请让该用户本人发送「绑定水鱼」。", reply_message=True)
             return
-            await send_authorization_prompt(
-                rise_score, str(qqid), reason="上分推荐", bot=bot
-            )
-        return
+        await rise_score.finish(
+            "水鱼完整成绩需要 OAuth 授权，请发送「绑定水鱼」。",
+            reply_message=True,
+        )
     except Exception as exc:
         await send_error_with_diagnostic(rise_score, exc, "MAI", context="上分推荐")
         return
@@ -175,10 +174,10 @@ async def _(bot: Bot, event: MessageEvent, match = RegexMatched(), user_id: Opti
     try:
         data = await player_plate_data(qqid, '', ver, plan)
     except OAuthConsentRequiredError:
-        await send_authorization_prompt(
-            plate_process, str(qqid), reason="牌子进度", bot=bot
+        await plate_process.finish(
+            "水鱼完整成绩需要 OAuth 授权，请发送「绑定水鱼」。",
+            reply_message=True,
         )
-        return
     except Exception as exc:
         await send_error_with_diagnostic(plate_process, exc, "MAI", context="牌子进度")
         return
@@ -221,12 +220,12 @@ async def _(bot: Bot, event: MessageEvent, match = RegexMatched(), user_id: Opti
         data = await level_process_data(qqid, username, level, plan, category, int(page) if page else 1)
     except OAuthConsentRequiredError:
         if username:
-            await level_process.finish("指定用户名还没有授权水鱼，请让该用户本人发送「水鱼授权」。", reply_message=True)
+            await level_process.finish("指定用户名还没有授权水鱼，请让该用户本人发送「绑定水鱼」。", reply_message=True)
             return
-            await send_authorization_prompt(
-                level_process, str(qqid), reason="等级进度", bot=bot
-            )
-        return
+        await level_process.finish(
+            "水鱼完整成绩需要 OAuth 授权，请发送「绑定水鱼」。",
+            reply_message=True,
+        )
     except Exception as exc:
         await send_error_with_diagnostic(level_process, exc, "MAI", context="等级进度")
         return
@@ -256,12 +255,12 @@ async def _(bot: Bot, event: MessageEvent, match = RegexMatched(), user_id: Opti
         data = await level_achievement_list_data(qqid, username, rating, int(page) if page else 1)
     except OAuthConsentRequiredError:
         if username:
-            await level_achievement_list.finish("指定用户名还没有授权水鱼，请让该用户本人发送「水鱼授权」。", reply_message=True)
+            await level_achievement_list.finish("指定用户名还没有授权水鱼，请让该用户本人发送「绑定水鱼」。", reply_message=True)
             return
-            await send_authorization_prompt(
-                level_achievement_list, str(qqid), reason="分数列表", bot=bot
-            )
-        return
+        await level_achievement_list.finish(
+            "水鱼完整成绩需要 OAuth 授权，请发送「绑定水鱼」。",
+            reply_message=True,
+        )
     except Exception as exc:
         await send_error_with_diagnostic(level_achievement_list, exc, "MAI", context="分数列表")
         return
