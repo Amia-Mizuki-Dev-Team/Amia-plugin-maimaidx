@@ -252,9 +252,7 @@ async def _(bot: Bot, event: MessageEvent):
         f"**数据源状态（落雪 + 水鱼 双源自动汇总）**\n"
         f"• 落雪查分器绑定：{lx_ind}\n"
         f"• 水鱼公开查询（B50）：{'可用' if bind['diving_fish'] else '不可用'}\n"
-        f"• 水鱼 OAuth 应用配置：{oauth_config}\n"
         f"• 当前用户水鱼授权：{oauth_ind}\n\n"
-        f"• OAuth 共享授权记录：{shared_oauth}\n\n"
         f"*成绩数据由落雪与水鱼逐谱面汇总；水鱼完整成绩需本人授权。*"
     )
 
@@ -265,9 +263,7 @@ async def _(bot: Bot, event: MessageEvent):
         f"数据源状态（双源自动汇总）：\n"
         f"落雪查分器绑定：{'[已绑定]' if bind['lxns'] else '[未绑定]'}\n"
         f"水鱼公开查询（B50）：{'可用' if bind['diving_fish'] else '不可用'}\n"
-        f"水鱼 OAuth 应用配置：{oauth_config}\n"
         f"当前用户水鱼授权：{oauth_ind}\n\n"
-        f"OAuth 共享授权记录：{shared_oauth}\n\n"
         f"• 提示：需要完整水鱼成绩时先发送「水鱼授权」。"
     )
 
