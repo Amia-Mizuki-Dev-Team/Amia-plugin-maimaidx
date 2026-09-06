@@ -11,6 +11,7 @@ import sys
 
 from nonebot import require
 from nonebot.adapters.onebot.v11 import MessageSegment
+from nonebot.log import logger as log
 
 
 class _QbindFileFallback:
@@ -88,15 +89,19 @@ for _name in _REQUIRED_SYNC_API:
     globals()[_name] = getattr(maimai_sync, _name)
 
 # 对外公共函数映射层：统一经 maimai_manage 门面取用（Manage → sync 桥接），
-# 禁止跳过 Manage 直挂其他插件的公共实现。分层结果被 config import 期依赖，
-# Manage 不可用时必须显式抛错而非静默降级。
+# 禁止跳过 Manage 直挂其他插件的公共实现。Manage 门面优先（架构规范）；
+# Manage 缺失时回退 maimai_sync 的同名实现（函数对象来自同一实现，不产生
+# 漂移）；两者都不可用才显式抛错。分层结果被 config import 期依赖。
+_manage = None
 try:
     _manage = require("maimai_manage")
 except Exception as exc:
-    raise RuntimeError(f"无法加载 maimai_manage（dotenv 分层映射源）: {exc}") from exc
-load_env_layers = getattr(_manage, "load_env_layers", None)
+    log.warning(f"maimai_manage 门面不可用（{exc}），load_env_layers 回退 maimai_sync 直连")
+load_env_layers = getattr(_manage, "load_env_layers", None) if _manage is not None else None
 if load_env_layers is None:
-    raise RuntimeError("maimai_manage 缺少公共 API: load_env_layers")
+    load_env_layers = getattr(maimai_sync, "load_env_layers", None)
+if load_env_layers is None:
+    raise RuntimeError("maimai_manage 与 maimai_sync 均缺少 load_env_layers，dotenv 分层无法执行")
 
 # Manage facade 的绑定查询函数（运行时使用）。
 # Manage 版本过旧没有 get_bind 时为 None，运行时回退 get_user_bind_async。

@@ -29,7 +29,7 @@ from .maimaidx_error import (
 
 AUTH_BASE = "https://auth.diving-fish.com"
 TOKEN_PATH = "/oauth/token"
-DEFAULT_SCOPE = "prober.records.read prober.records.write"
+DEFAULT_SCOPE = "prober.records.read"
 TOKEN_EXPIRY_SKEW = 30.0
 
 # Public type alias kept deliberately small: the server treats the subject as
