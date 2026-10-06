@@ -12,7 +12,7 @@ try:
 except ImportError:
     zh_convert = None
 
-from ..libraries.maimaidx_best_50 import generate
+from ..libraries.maimaidx_best_50 import appendix_absent_notice, generate
 from ..libraries.maimaidx_error import (
     MaimaiError,
     OAuthConsentRequiredError,
@@ -34,6 +34,72 @@ except ImportError:
     player_score_data = None
     score_line_data = None
 
+# ============================================================
+# 「B50 锐评」入口（任务 b50-critique-merge · P1b：全删，只留 b50）
+# ============================================================
+# 昨天这里是**反向**守卫（``rule=_not_coach_critique``）：整条消息恰好是锐评指令时
+# 返回 False，把 ``b50锐评`` 让给 coach 的 priority=5 matcher。用户拍板合并入口后
+# 方向整个反过来 —— 这些形态现在**由 best50 认领**、行为等同 ``b50``：尾部的
+# 「锐评/点评」只是标记，吃掉它、``username`` 必须为空，锐评本体作为附录条拼在
+# B50 图下方（见 libraries/maimaidx_best_50.py 的 generate/_render_appendix_png）。
+# 守卫因此**退役**：它要拦的形态正是现在要接的形态，留着等于把 b50 自己的指令判死。
+#
+# 事故根因依然有效，所以这条纪律必须钉死（tests/test_b50_critique_guard.py）：
+#   .env 的 COMMAND_START=["/", ""] 含空前缀，而 nonebot/rule.py:418 明示「命令内容
+#   与后续消息间无需空格」，所以 on_command('b50') 连 `b50锐评` 这种粘连写法都会
+#   认领，CommandArg 于是拿到「锐评」—— **把它当 username 去查分就是昨天那张
+#   「落雪（LXNS）没有找到对应的舞萌玩家数据」报错卡的根因**。认领它现在是对的，
+#   但标记解析必须先于 username 赋值，且解析后 username 恒为空串。
+#
+# 为什么仍然不用 force_whitespace=True：它会连带废掉 `b50张三` 这类粘连昵称查询
+# （现存合法用法，回归面比要修的 bug 大），而带空格的 `b50 锐评` 本来就有空白、
+# 它根本不触发。标记解析在 CommandArg 上做，两种写法一起解决。
+#
+# 不以 b50 开头的裸 `锐评` / `点评`（含倒序 `锐评b50`）与 best50 无关：on_command
+# 本来就接不到它们，由 coach 的 matcher 回一句引导语（coach 侧 P1a 已改）。best50
+# 既不拦也不放弃它们，所以不存在「既不认领也没人接」的静默洞。
+B50_CRITIQUE_MARKER_PATTERN = r"^(?:无?锐评|无?点评)$"
+"""整串恰好是这个标记时 = 用户要（或明确不要）锐评附录，``username`` 必须为空。
+写成单个字符串字面量：跨仓库 diff 一眼可比（coach 侧 CRITIQUE_PATTERN 同手法）。"""
+_B50_MARKER_RE = re.compile(B50_CRITIQUE_MARKER_PATTERN)
+
+#: 非锚定写法（``b50 锐评 谢谢`` / ``b50锐评一下`` / ``b50 锐评b50``）的**前导**标记。
+#: 整串不是标记，但以标记开头 —— 以前整串当 username 去查分，回的是
+#: 「没有找到玩家数据」报错卡（用户实测）。现在按标记处理：标记吃掉，尾巴不猜。
+_B50_LEADING_MARKER_RE = re.compile(r"^(无?锐评|无?点评)")
+
+
+def _parse_b50_arg(text: Any) -> tuple[str, bool, bool]:
+    """把 CommandArg 纯文本拆成 ``(username, want_appendix, asked_critique)``。
+
+    - ``锐评`` / ``点评``（``b50锐评``、``b50 锐评``、``B50锐评``、``b50点评``、
+      ``/b50锐评`` 的尾部）→ ``("", True, True)``：标记吃掉，本次接附录。
+      ★ username 恒为空串，这是昨天事故的直接断言点。
+    - ``无锐评`` / ``无点评`` → ``("", False, True)``：一次性修饰词，本次不接附录，
+      **不做群内持久状态**（下一条裸 ``b50`` 照旧接）。
+    - **前导标记 + 尾巴**（``锐评 谢谢`` / ``锐评一下`` / ``锐评b50``）→ 同标记语义
+      （m3）：以前整串当 username 去查分，回的是「没有找到玩家数据」报错卡；
+      现在标记吃掉、尾巴不猜意图，绝不拿标记当用户名。
+    - 其余一律**原样**当 username —— 零回归：``b50张三``、``b50 谢谢锐评`` 这类
+      不以标记开头的写法照旧走 b50 原有路径。
+    - fail-open：``text`` 为 None / 非字符串 / 取文本抛异常时按空串处理（等同裸
+      ``b50``），绝不因为解析打断出图。
+    """
+    try:
+        arg = str(text or "").strip()
+    except Exception as exc:  # noqa: BLE001
+        log.debug(f"[b50] 参数取文本失败，按空参数处理（等同裸 b50）: {exc!r}")
+        return "", True, False
+    if not _B50_MARKER_RE.match(arg):
+        leading = _B50_LEADING_MARKER_RE.match(arg)
+        if leading:
+            # m3：前导标记按标记处理（尾巴不猜），不再当 username 查分
+            return "", (not leading.group(1).startswith("无")), True
+        return arg, True, False
+    # 「无」前缀 = 本次不要附录；其余标记 = 要附录
+    return "", (not arg.startswith("无")), True
+
+
 # Keep the score commands ahead of legacy maimaidx installations which may
 # still be present in a bot's environment.  A command matcher with the same
 # priority is run concurrently in NoneBot, so ``priority=0`` is intentional:
@@ -42,6 +108,9 @@ except ImportError:
 # This is especially important during upgrades, where the old matcher can
 # report "没有找到玩家" while the current implementation has already
 # generated the requested image.
+# 入口改向（P1b）后 best50 **不再挂 rule 守卫**：粘连的「b50锐评」由本 matcher 认领，
+# 标记在 handler 里剥掉（见 _parse_b50_arg），coach 的 priority=5 matcher 因此只会
+# 看到不以 b50 开头的裸「锐评/点评」并回引导语。
 best50 = on_command(
     'b50',
     aliases={'B50', '生成我的B50', '生成B50'},
@@ -121,7 +190,14 @@ def _ambiguous_message(matches: list[Any]) -> str:
 
 @best50.handle()
 async def _(bot: Bot, event: MessageEvent, message: Message = CommandArg(), user_id: Optional[int] = Depends(get_at_qq)):
-    username = message.extract_plain_text().strip()
+    arg_text = message.extract_plain_text()
+    # ★ 标记必须先于 username 解析：「锐评/点评/无锐评」是修饰词，绝不是用户名
+    username, want_appendix, asked_critique = _parse_b50_arg(arg_text)
+    if asked_critique:
+        log.info(
+            f"[b50] 锐评入口并入 b50: arg={arg_text!r} → username='' "
+            f"appendix={want_appendix}"
+        )
     raw_qq = user_id if user_id is not None else event.user_id
     real_qq_str = get_real_qq(str(raw_qq))
     if real_qq_str and str(real_qq_str).isdigit():
@@ -139,7 +215,13 @@ async def _(bot: Bot, event: MessageEvent, message: Message = CommandArg(), user
             reply_message=True,
         )
     try:
-        img_res = await generate(qqid, username)
+        img_res, notice = await generate(qqid, username, appendix=want_appendix)
+        # 只在用户主动打了锐评标记时才播报降级原因：裸 b50 的文字必须与改动前一致
+        if asked_critique and want_appendix and not notice:
+            # ★ m1：coach 缺席时 generate 保持静默（硬线），这句提示由调用方补
+            notice = appendix_absent_notice()
+        if asked_critique and notice:
+            img_res = img_res + MessageSegment.text(f"\n{notice}")
         await best50.finish(img_res, reply_message=True)
     except FinishedException:
         raise
@@ -173,7 +255,8 @@ async def _(bot: Bot, event: MessageEvent, message: Message = CommandArg(), user
         )
     try:
         # merged 调用下水鱼侧自动不参与（无 AP50 数据），降级结果标注“仅落雪”
-        img_res = await generate(qqid, username, is_ap=True)
+        # ★ ap50 显式不接锐评附录（appendix=False → 连 capability 表都不查）
+        img_res, _notice = await generate(qqid, username, is_ap=True, appendix=False)
         await ap50.finish(img_res, reply_message=True)
     except FinishedException:
         raise
