@@ -135,9 +135,14 @@ class _SegmentFactory:
 
 
 def _encode(img: Image.Image) -> str:
-    """与 libraries/image.py:238-243 同口径的确定性编码。"""
+    """与 generate 末尾 _encode 同口径（JPEG 90%，RGBA 铺白底）。"""
+    target = img
+    if target.mode == "RGBA":
+        flat = Image.new("RGB", target.size, (255, 255, 255))
+        flat.paste(target, mask=target.split()[3])
+        target = flat
     buffer = io.BytesIO()
-    img.save(buffer, "PNG")
+    target.save(buffer, format="JPEG", quality=90)
     return "base64://" + base64.b64encode(buffer.getvalue()).decode()
 
 
@@ -147,7 +152,7 @@ class _Encoder:
     def __init__(self) -> None:
         self.images: list[Image.Image] = []
 
-    def __call__(self, img: Image.Image, format: str = "PNG") -> str:
+    def __call__(self, img: Image.Image, format: str = "PNG", **save_kwargs) -> str:
         self.images.append(img)
         return _encode(img)
 
@@ -972,7 +977,9 @@ class P5bIdentityNoticeAndThreadTests(unittest.TestCase):
         self.core.registry._provider = provider
         self._run()
         self.assertIn(self.ns["_paste_appendix"], calls, "整画布拼接必须进线程")
-        self.assertIn(self.ns["image_to_base64"], calls, "PNG 编码 + base64 必须进线程")
+        # 编码经 generate._encode 闭包整层进线程（内部调 image_to_base64）
+        encode_fns = [fn for fn in calls if getattr(fn, "__name__", "") == "_encode"]
+        self.assertTrue(encode_fns, "JPEG 编码 + base64 必须进线程")
 
 
 if __name__ == "__main__":

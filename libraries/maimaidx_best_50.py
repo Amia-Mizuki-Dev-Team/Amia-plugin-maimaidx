@@ -1,3 +1,4 @@
+import base64
 import math
 import inspect
 import traceback
@@ -746,5 +747,9 @@ async def generate(
                 log.warning(f"[b50] 锐评附录拼接失败，按原样出图: {exc!r}")
                 notice = _APPENDIX_DEGRADE_NOTICE
     # ★ 编码同样同步阻塞（PNG 编码 + base64）→ 一并进线程
-    encoded = await anyio.to_thread.run_sync(image_to_base64, image)
+    # 压缩到 90% 质量（用户定稿）：JPEG 编码，RGBA 铺白底在 image_to_base64 内处理
+    def _encode() -> str:
+        return image_to_base64(image, format="JPEG", quality=90)
+
+    encoded = await anyio.to_thread.run_sync(_encode)
     return MessageSegment.image(encoded), notice

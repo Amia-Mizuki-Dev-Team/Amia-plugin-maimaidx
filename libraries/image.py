@@ -235,9 +235,15 @@ def text_to_bytes_io(text: str) -> BytesIO:
     return bio
 
 
-def image_to_base64(img: Image.Image, format='PNG') -> str:
+def image_to_base64(img: Image.Image, format='PNG', **save_kwargs) -> str:
+    if format == 'JPEG' and img.mode in ('RGBA', 'LA', 'P'):
+        # JPEG 无 alpha：铺白底后编码（调用方传来的仍是原画布对象）
+        flat = Image.new('RGB', img.size, (255, 255, 255))
+        rgba = img.convert('RGBA')
+        flat.paste(rgba, mask=rgba.split()[3])
+        img = flat
     output_buffer = BytesIO()
-    img.save(output_buffer, format)
+    img.save(output_buffer, format, **save_kwargs)
     byte_data = output_buffer.getvalue()
     base64_str = base64.b64encode(byte_data).decode()
     return 'base64://' + base64_str
