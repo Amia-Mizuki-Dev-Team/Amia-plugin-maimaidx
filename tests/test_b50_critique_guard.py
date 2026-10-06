@@ -47,6 +47,7 @@ PARSER_NAMES = frozenset({
     "B50_CRITIQUE_MARKER_PATTERN",
     "_B50_MARKER_RE",
     "_B50_LEADING_MARKER_RE",
+    "_B50_TRAILING_MARKER_RE",
     "_parse_b50_arg",
 })
 
@@ -81,6 +82,15 @@ NON_MARKER_ARGS = (
 # 报错卡）。现在按标记处理：标记吃掉、尾巴不猜意图，username 恒为空串。
 LEADING_MARKER_ARGS = (
     "锐评 谢谢", "锐评一下", "锐评吧", "点评 一下", "锐评b50", "无锐评 谢谢",
+)
+# ★ 尾随标记：昵称在前、标记在后（``b50 张三 锐评``）。与 ``b50锐评`` 同一族
+# 事故：以前整串当 username 去查分 → 「没有找到玩家数据」报错卡。
+# 每项 = (CommandArg 纯文本, 期望 username, 期望 want_appendix)。
+TRAILING_MARKER_ARGS = (
+    ("张三 锐评", "张三", True),
+    ("张三 点评", "张三", True),
+    ("张三 无锐评", "张三", False),
+    ("张三 无点评", "张三", False),
 )
 
 
@@ -356,6 +366,30 @@ class B50ArgParseTests(unittest.TestCase):
                     appendix, not text.startswith("无"),
                     "「无」前缀 = 本次不要附录；其余标记 = 要附录",
                 )
+
+    def test_trailing_marker_keeps_username(self) -> None:
+        """★ 尾随标记：``b50 张三 锐评`` → username='张三'、带附录；
+        ``b50 张三 无锐评`` → username='张三'、不带附录。与 ``b50锐评`` 同一族
+        事故（整串当 username 查分 → 「没有找到玩家数据」报错卡）。"""
+        for text, name, appendix in TRAILING_MARKER_ARGS:
+            with self.subTest(text=text):
+                username, want_appendix, asked = self.parse(text)
+                self.assertEqual(username, name, f"{text!r} 的昵称必须保留")
+                self.assertTrue(asked, f"{text!r} 必须被识别为锐评标记")
+                self.assertEqual(
+                    want_appendix, appendix,
+                    "「无」前缀 = 本次不要附录；其余标记 = 要附录",
+                )
+
+    def test_trailing_marker_does_not_overreach(self) -> None:
+        """★ 别误伤：``b50 张三`` 是纯昵称查询（零回归）；``b50 锐评一下`` 不以
+        标记结尾，仍走前导分支（P5b 已定语义），不被尾随分支改写。"""
+        # 纯昵称：不剥、不接标记
+        self.assertEqual(self.parse("张三"), ("张三", True, False))
+        # 前导非锚定形态：语义不变（标记吃掉、username 空）
+        self.assertEqual(self.parse("锐评一下"), ("", True, True))
+        # 粘连昵称（标记前无空白）：照旧整串当 username
+        self.assertEqual(self.parse("谢谢锐评"), ("谢谢锐评", True, False))
 
     def test_parse_fails_open_to_bare_b50(self) -> None:
         """取文本炸了必须按空串处理：解析异常绝不能打断出图。"""

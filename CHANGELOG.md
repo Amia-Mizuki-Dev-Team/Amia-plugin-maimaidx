@@ -1,5 +1,22 @@
 # Changelog
 
+## [2026-10-06] - b50 尾随锐评标记（P5b 补）
+
+### Fixed
+
+- **尾随标记**（`command/mai_score.py`）：`b50 张三 锐评` / `b50 张三 点评` /
+  `b50 张三 无锐评` 的 CommandArg 以前整串当 username 去查分 → 「没有找到玩家数据」
+  报错卡（与 `b50锐评` 同一族）。新增 `_B50_TRAILING_MARKER_RE`：**以标记结尾**
+  且标记前有空白时，剥掉标记、保留昵称（`张三 锐评` → username=`张三`、带附录；
+  `张三 无锐评` → username=`张三`、不带附录）。标记前无空白的粘连昵称
+  （`b50 谢谢锐评`）与不以标记结尾的前导形态（`b50 锐评一下`）语义不变。
+  `tests/test_b50_critique_guard.py` 新增 `TRAILING_MARKER_ARGS` 矩阵与
+  `test_trailing_marker_does_not_overreach`。
+
+### Notes
+
+- 全套 121 → **123 OK (skipped=2)**。
+
 ## [2026-10-06] - b50 锐评附录 P5b（身份键 / 节流转述 / m1 / m3 / m5）
 
 ### Added

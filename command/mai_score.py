@@ -68,6 +68,13 @@ _B50_MARKER_RE = re.compile(B50_CRITIQUE_MARKER_PATTERN)
 #: 「没有找到玩家数据」报错卡（用户实测）。现在按标记处理：标记吃掉，尾巴不猜。
 _B50_LEADING_MARKER_RE = re.compile(r"^(无?锐评|无?点评)")
 
+#: 非锚定写法的**尾随**标记（``b50 张三 锐评`` / ``b50 张三 无锐评``）：昵称在前、
+#: 标记在后。与 ``b50锐评`` 同一族事故 —— 以前整串当 username 去查分，回的是
+#: 「没有找到玩家数据」报错卡。标记前**必须**有空白，否则 ``b50 谢谢锐评`` 这类
+#: 粘连昵称（现存合法用法）会被误剥；``b50 锐评一下`` / ``b50 锐评 谢谢`` 不以
+#: 标记结尾，仍走前导分支，语义不变。
+_B50_TRAILING_MARKER_RE = re.compile(r"^(?P<name>.+?)\s+(?P<marker>无?锐评|无?点评)$")
+
 
 def _parse_b50_arg(text: Any) -> tuple[str, bool, bool]:
     """把 CommandArg 纯文本拆成 ``(username, want_appendix, asked_critique)``。
@@ -80,8 +87,11 @@ def _parse_b50_arg(text: Any) -> tuple[str, bool, bool]:
     - **前导标记 + 尾巴**（``锐评 谢谢`` / ``锐评一下`` / ``锐评b50``）→ 同标记语义
       （m3）：以前整串当 username 去查分，回的是「没有找到玩家数据」报错卡；
       现在标记吃掉、尾巴不猜意图，绝不拿标记当用户名。
+    - **昵称 + 尾随标记**（``张三 锐评`` / ``张三 无锐评``）→ ``("张三", True/False,
+      True)``：标记吃掉、昵称保留（与 ``b50锐评`` 同一族事故）。标记前必须有空白，
+      所以 ``b50 谢谢锐评`` 这类粘连昵称照旧原样当 username。
     - 其余一律**原样**当 username —— 零回归：``b50张三``、``b50 谢谢锐评`` 这类
-      不以标记开头的写法照旧走 b50 原有路径。
+      不以标记开头、也不以标记结尾的写法照旧走 b50 原有路径。
     - fail-open：``text`` 为 None / 非字符串 / 取文本抛异常时按空串处理（等同裸
       ``b50``），绝不因为解析打断出图。
     """
@@ -95,6 +105,14 @@ def _parse_b50_arg(text: Any) -> tuple[str, bool, bool]:
         if leading:
             # m3：前导标记按标记处理（尾巴不猜），不再当 username 查分
             return "", (not leading.group(1).startswith("无")), True
+        trailing = _B50_TRAILING_MARKER_RE.match(arg)
+        if trailing:
+            # 尾随标记：昵称在前、标记在后 —— 剥掉标记、保留昵称
+            return (
+                trailing.group("name").strip(),
+                (not trailing.group("marker").startswith("无")),
+                True,
+            )
         return arg, True, False
     # 「无」前缀 = 本次不要附录；其余标记 = 要附录
     return "", (not arg.startswith("无")), True
