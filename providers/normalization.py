@@ -87,10 +87,11 @@ def resolve_qq_id(identity) -> int | None:
     if canonical is not None and str(canonical).isdecimal():
         return int(canonical)
     raw_user_id = str(identity.external_key.user_id)
+    self_id = str(identity.external_key.self_id)
     try:
         # 延迟导入：dependencies 会强制加载 maimai_sync/qbind，隔离测试环境下不可用。
         from ..dependencies import get_real_qq
-        real_qq = get_real_qq(raw_user_id)
+        real_qq = get_real_qq(raw_user_id, self_id)
     except Exception:
         real_qq = None
     if real_qq and str(real_qq).isdecimal():
@@ -100,6 +101,6 @@ def resolve_qq_id(identity) -> int | None:
     log.warning(
         "[provider] 身份断点: 无法解析真实 QQ，成绩查询将被拒绝 "
         f"(canonical={canonical!r} external_user={raw_user_id!r} "
-        f"self_id={identity.external_key.self_id!r})"
+        f"self_id={self_id!r})"
     )
     return None

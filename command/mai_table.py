@@ -34,12 +34,19 @@ def get_at_qq(message: MessageEvent) -> Optional[int]:
     return None
 
 
-def _bound_user_id(value: object) -> int | str | None:
+def _bound_user_id(
+    value: object,
+    self_id: object | None = None,
+    *,
+    direct_target: bool = False,
+) -> int | str | None:
     """Use the real qbind identity before deriving an OAuth subject."""
     raw = str(value)
-    real = get_real_qq(raw)
+    real = get_real_qq(raw, str(self_id) if self_id is not None else None)
     if real:
         return int(real) if str(real).isdigit() else str(real)
+    if direct_target and raw.isdecimal():
+        return int(raw)
     return None
 
 
@@ -80,7 +87,7 @@ async def _(bot: Bot, event: MessageEvent, match = RegexMatched()):
     if ra in levelList[:6]:
         await rating_table_pfm.finish('只支持查询lv7-15的完成表', reply_message=True)
     elif ra in levelList[6:]:
-        qqid = _bound_user_id(event.user_id)
+        qqid = _bound_user_id(event.user_id, str(event.self_id))
         if qqid is None:
             await _finish_unbound(rating_table_pfm)
             return
@@ -109,7 +116,7 @@ async def _(bot: Bot, event: MessageEvent, match = RegexMatched()):
         await plate_table_pfm.finish('暂不支持查询「舞」系和「霸者」的牌子', reply_message=True)
     if f'{ver}{plan}' == '真将':
         await plate_table_pfm.finish('真系没有真将哦', reply_message=True)
-    qqid = _bound_user_id(event.user_id)
+    qqid = _bound_user_id(event.user_id, str(event.self_id))
     if qqid is None:
         await _finish_unbound(plate_table_pfm)
         return
@@ -137,7 +144,11 @@ async def _(bot: Bot, event: MessageEvent, match = RegexMatched(), user_id: Opti
         await rise_score.finish('无此等级', reply_message=True)
     elif match.group(3):
         username = match.group(3).strip()
-    qqid = None if username else _bound_user_id(user_id or event.user_id)
+    qqid = None if username else _bound_user_id(
+        user_id if user_id is not None else event.user_id,
+        str(event.self_id),
+        direct_target=user_id is not None,
+    )
     if qqid is None and not username:
         await _finish_unbound(rise_score)
         return
@@ -166,7 +177,11 @@ async def _(bot: Bot, event: MessageEvent, match = RegexMatched(), user_id: Opti
     if f'{ver}{plan}' == '真将':
         await plate_process.finish('真系没有真将哦', reply_message=True)
 
-    qqid = _bound_user_id(user_id or event.user_id)
+    qqid = _bound_user_id(
+        user_id if user_id is not None else event.user_id,
+        str(event.self_id),
+        direct_target=user_id is not None,
+    )
     if qqid is None:
         await _finish_unbound(plate_process)
         return
@@ -191,7 +206,11 @@ async def _(bot: Bot, event: MessageEvent, match = RegexMatched(), user_id: Opti
     category = match.group(3)
     page = match.group(4)
     username = match.group(5)
-    qqid = None if username else _bound_user_id(user_id or event.user_id)
+    qqid = None if username else _bound_user_id(
+        user_id if user_id is not None else event.user_id,
+        str(event.self_id),
+        direct_target=user_id is not None,
+    )
     if qqid is None and not username:
         await _finish_unbound(level_process)
         return
@@ -237,7 +256,11 @@ async def _(bot: Bot, event: MessageEvent, match = RegexMatched(), user_id: Opti
     rating = match.group(1)
     page = match.group(2)
     username = match.group(3)
-    qqid = None if username else _bound_user_id(user_id or event.user_id)
+    qqid = None if username else _bound_user_id(
+        user_id if user_id is not None else event.user_id,
+        str(event.self_id),
+        direct_target=user_id is not None,
+    )
     if qqid is None and not username:
         await _finish_unbound(level_achievement_list)
         return

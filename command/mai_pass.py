@@ -264,11 +264,18 @@ def _prune_pending() -> None:
             _pending_dxpass.pop(token, None)
 
 
-def _resolve_canonical_id(bot: Bot, raw_qq: int) -> Optional[int]:
-    resolved = get_real_qq(str(raw_qq))
+def _resolve_canonical_id(
+    raw_qq: int,
+    self_id: object,
+    *,
+    direct_target: bool = False,
+) -> Optional[int]:
+    resolved = get_real_qq(str(raw_qq), str(self_id))
     if resolved and str(resolved).isdigit():
         return int(resolved)
-    if is_official_bot(bot.self_id):
+    if direct_target and str(raw_qq).isdigit():
+        return int(raw_qq)
+    if is_official_bot(self_id):
         return None
     return int(raw_qq)
 
@@ -312,8 +319,13 @@ async def _(
     user_id: Optional[int] = Depends(get_at_qq),
 ):
     _prune_pending()
-    raw_qq = user_id or event.user_id
-    qqid = _resolve_canonical_id(bot, raw_qq)
+    is_direct_target = user_id is not None
+    raw_qq = user_id if is_direct_target else event.user_id
+    qqid = _resolve_canonical_id(
+        raw_qq,
+        str(event.self_id),
+        direct_target=is_direct_target,
+    )
     if qqid is None:
         await dxpass.finish("当前官方机器人身份尚未完成绑定，无法查询资料或制作 DX Pass。请先完成 qbind 绑定。", reply_message=True)
     args = message.extract_plain_text().strip()
@@ -489,7 +501,7 @@ def _authorized_pending(bot: Bot, event: MessageEvent, token: str) -> Optional[d
         return None
     if int(item.get("event_user_id", -1)) != int(event.user_id):
         return None
-    canonical = _resolve_canonical_id(bot, event.user_id)
+    canonical = _resolve_canonical_id(event.user_id, str(event.self_id))
     if canonical is None or int(item.get("canonical_user_id", -1)) != canonical:
         return None
     return item

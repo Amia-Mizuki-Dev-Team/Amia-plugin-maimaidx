@@ -14,7 +14,7 @@ theme = on_command("mai主题", aliases={"mai主题列表", "切换mai主题"})
 @theme.handle()
 async def _(event: MessageEvent, message=CommandArg()):
     raw = message.extract_plain_text().strip()
-    resolved = get_real_qq(str(event.user_id))
+    resolved = get_real_qq(str(event.user_id), str(event.self_id))
     if not (resolved and str(resolved).isdigit()):
         if is_official_bot(event.self_id):
             await theme.finish("当前身份尚未绑定，无法保存主题。请先完成 qbind 绑定。", reply_message=True)

@@ -40,7 +40,7 @@ def _short_text(text: object, limit: int) -> str:
 
 def _bound_qq(event: MessageEvent) -> int | None:
     """Resolve the real QQ through qbind; never hash an adapter id."""
-    real = get_real_qq(str(event.user_id))
+    real = get_real_qq(str(event.user_id), str(event.self_id))
     return int(real) if real and str(real).isdigit() else None
 
 

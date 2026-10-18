@@ -199,7 +199,7 @@ async def _(bot: Bot, event: MessageEvent, message: Message = CommandArg(), user
             f"appendix={want_appendix}"
         )
     raw_qq = user_id if user_id is not None else event.user_id
-    real_qq_str = get_real_qq(str(raw_qq))
+    real_qq_str = get_real_qq(str(raw_qq), str(event.self_id))
     if real_qq_str and str(real_qq_str).isdigit():
         qqid = int(real_qq_str)
     elif user_id is not None and str(user_id).isdigit():
@@ -240,7 +240,7 @@ async def _(bot: Bot, event: MessageEvent, message: Message = CommandArg(), user
 async def _(bot: Bot, event: MessageEvent, message: Message = CommandArg(), user_id: Optional[int] = Depends(get_at_qq)):
     username = message.extract_plain_text().strip()
     raw_qq = user_id if user_id is not None else event.user_id
-    real_qq_str = get_real_qq(str(raw_qq))
+    real_qq_str = get_real_qq(str(raw_qq), str(event.self_id))
     if real_qq_str and str(real_qq_str).isdigit():
         qqid = int(real_qq_str)
     elif user_id is not None and str(user_id).isdigit():
@@ -274,7 +274,7 @@ async def _(bot: Bot, event: MessageEvent, message: Message = CommandArg(), user
         await minfo.finish('本地缺少单曲成绩查询组件 (player_score_data)，无法调用此功能。', reply_message=True)
         
     raw_qq = user_id if user_id is not None else event.user_id
-    real_qq_str = get_real_qq(str(raw_qq))
+    real_qq_str = get_real_qq(str(raw_qq), str(event.self_id))
     # 受保护的水鱼 OAuth 请求必须使用 qbind 解析出的真实 QQ 身份派生 subject；
     # 绝不能把适配器的虚拟 ``event.user_id`` 哈希成 OAuth subject。
     # A native @ segment already contains a real QQ number.  qbind remains

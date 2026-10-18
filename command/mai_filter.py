@@ -39,7 +39,7 @@ FILTER_HELP = (
 
 def _external_id(event: MessageEvent) -> str | None:
     raw = str(event.user_id)
-    real = get_real_qq(raw)
+    real = get_real_qq(raw, str(event.self_id))
     if real:
         return str(real)
     return None

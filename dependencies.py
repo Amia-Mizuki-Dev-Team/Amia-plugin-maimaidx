@@ -25,7 +25,11 @@ class _QbindFileFallback:
     _path = Path(__file__).resolve().parents[1] / "qbind" / "binds.json"
 
     @classmethod
-    def get_real_qq(cls, session_id: str):
+    def get_real_qq(cls, session_id: str, self_id: str | None = None):
+        # The legacy JSON store has no Bot namespace.  Never use it when the
+        # caller explicitly asks for a scoped lookup.
+        if self_id is not None:
+            return None
         try:
             binds = json.loads(cls._path.read_text(encoding="utf-8"))
         except (OSError, ValueError, TypeError):
@@ -180,4 +184,8 @@ def get_at_user_id(segment: MessageSegment, bot_id: int | str | None = None) -> 
     return int(raw) if str(raw).isdigit() else None
 
 
-get_real_qq = qbind.get_real_qq
+def get_real_qq(session_id: str, self_id: str | None = None):
+    """Resolve a user through qbind, optionally within a Bot namespace."""
+    if self_id is None:
+        return qbind.get_real_qq(session_id)
+    return qbind.get_real_qq(session_id, self_id)

@@ -58,7 +58,7 @@ class ResolveQqIdTests(unittest.TestCase):
         self.assertEqual(self.mod.resolve_qq_id(self._identity(canonical="9999")), 9999)
 
     def test_canonical_non_decimal_falls_through_to_qbind(self):
-        self.deps.get_real_qq = lambda sid: "3429630094"
+        self.deps.get_real_qq = lambda sid, _self_id: "3429630094"
         try:
             identity = self._identity(user_id="virt_001", canonical="unbound:x:virt_001")
             self.assertEqual(self.mod.resolve_qq_id(identity), 3429630094)
@@ -66,7 +66,9 @@ class ResolveQqIdTests(unittest.TestCase):
             del self.deps.get_real_qq
 
     def test_qbind_mapping_beats_raw_user_id(self):
-        self.deps.get_real_qq = lambda sid: "88888888" if sid == "virt_001" else None
+        self.deps.get_real_qq = (
+            lambda sid, _self_id: "88888888" if sid == "virt_001" else None
+        )
         try:
             identity = self._identity(user_id="virt_001")
             self.assertEqual(self.mod.resolve_qq_id(identity), 88888888)
@@ -75,21 +77,21 @@ class ResolveQqIdTests(unittest.TestCase):
 
     def test_onebot_real_qq_used_when_unbound(self):
         # 未注册 identity resolver 的 OneBot 用户：user_id 即真实 QQ
-        self.deps.get_real_qq = lambda sid: None
+        self.deps.get_real_qq = lambda sid, _self_id: None
         try:
             self.assertEqual(self.mod.resolve_qq_id(self._identity()), 3429630094)
         finally:
             del self.deps.get_real_qq
 
     def test_qbind_non_decimal_result_falls_to_raw(self):
-        self.deps.get_real_qq = lambda sid: "not-a-qq"
+        self.deps.get_real_qq = lambda sid, _self_id: "not-a-qq"
         try:
             self.assertEqual(self.mod.resolve_qq_id(self._identity()), 3429630094)
         finally:
             del self.deps.get_real_qq
 
     def test_unresolvable_identity_returns_none(self):
-        self.deps.get_real_qq = lambda sid: None
+        self.deps.get_real_qq = lambda sid, _self_id: None
         try:
             identity = self._identity(user_id="opend_虚拟id_9f3a")
             self.assertIsNone(self.mod.resolve_qq_id(identity))
@@ -98,7 +100,7 @@ class ResolveQqIdTests(unittest.TestCase):
 
     def test_dependencies_import_failure_still_uses_raw(self):
         # 隔离环境（无 maimai_sync/qbind）时延迟导入的查找失败不致命，raw 仍可用
-        def _boom(sid):
+        def _boom(sid, _self_id):
             raise ImportError("stub: dependencies 不可用")
 
         self.deps.get_real_qq = _boom
@@ -109,12 +111,42 @@ class ResolveQqIdTests(unittest.TestCase):
 
     def test_official_bot_self_id_never_blocks_resolution(self):
         # 回归：official_bot_ids 默认含 Gensokyo self_id，不得据此拒绝
-        self.deps.get_real_qq = lambda sid: None
+        self.deps.get_real_qq = lambda sid, _self_id: None
         try:
             identity = self._identity(user_id="3429630094", self_id="3889004352")
             self.assertEqual(self.mod.resolve_qq_id(identity), 3429630094)
         finally:
             del self.deps.get_real_qq
+
+    def test_qbind_mapping_is_scoped_to_bot_and_uses_real_qq(self):
+        calls = []
+
+        def _resolve(session_id, self_id):
+            calls.append((session_id, self_id))
+            if session_id == "shared-virtual" and self_id == "bot-a":
+                return "2338680148"
+            return None
+
+        self.deps.get_real_qq = _resolve
+        try:
+            self.assertEqual(
+                self.mod.resolve_qq_id(
+                    self._identity(user_id="shared-virtual", self_id="bot-a")
+                ),
+                2338680148,
+            )
+            self.assertIsNone(
+                self.mod.resolve_qq_id(
+                    self._identity(user_id="shared-virtual", self_id="bot-b")
+                )
+            )
+        finally:
+            del self.deps.get_real_qq
+
+        self.assertEqual(
+            calls,
+            [("shared-virtual", "bot-a"), ("shared-virtual", "bot-b")],
+        )
 
 
 if __name__ == "__main__":
