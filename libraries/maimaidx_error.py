@@ -44,6 +44,37 @@ class UserNotFoundError(MaimaiError):
             )
 
 
+class ScoreNotSyncedError(MaimaiError):
+    """The player is bound on LXNS but has not synced any B50 scores yet.
+
+    LXNS keeps the player profile (``/maimai/player/qq/{qqid}``) and the score
+    endpoint (``/maimai/player/{friend_code}/bests``) separate.  A 400/404 on
+    the score endpoint after the profile resolved means "bound but not synced",
+    not "player unknown".
+    """
+
+    hx_code = "HX-MAI-005"
+    hx_reason = "这位玩家在落雪还没有同步过成绩。"
+    hx_suggestion = "请让这位玩家在落雪查分器网页端完成一次成绩同步后再试。"
+    hx_cause = "落雪玩家资料存在，但成绩接口返回 400/404，通常表示尚未同步 B50。"
+    user_expected = True
+
+
+class NoScoresDataError(MaimaiError):
+    """A source answered successfully but returned no usable scores.
+
+    An empty standard+dx pair means "this player has no scores on that
+    source", not a successful zero-chart result: drawing it would show an
+    empty B50 card while the label still claims a merged query.
+    """
+
+    hx_code = "HX-MAI-005"
+    hx_reason = "没有可用的成绩数据。"
+    hx_suggestion = "请确认该玩家已在对应查分器同步过成绩后再试。"
+    hx_cause = "数据源返回 200，但标准与 DX 两个成绩桶都没有可用记录。"
+    user_expected = True
+
+
 class UserNotBindLXNSError(MaimaiError):
     hx_code = "HX-MAI-001"
     hx_reason = "当前用户还没有绑定落雪查分器账号。"
@@ -170,6 +201,32 @@ class ServerError(MaimaiError):
     hx_reason = "舞萌数据源暂时不可用。"
     hx_suggestion = "请稍后重试；如果连续失败，请提交诊断日志。"
     hx_cause = "上游服务返回错误或网络连接失败。"
+
+
+class AllSourcesFailedError(ServerError):
+    """Both score sources failed; keep each side's reason visible to the user.
+
+    Picking one source's exception (the old behaviour) hid the other side's
+    real cause, e.g. a Fish consent problem was masked by an LXNS miss.
+    """
+
+    hx_cause = "落雪和水鱼都没有返回可用的成绩数据。"
+    # 「两边都没绑定/都没成绩」是正常的用户态结果；若按 ServerError 处理，
+    # 每次查询都会写一个诊断文件并打 ERROR 日志。
+    user_expected = True
+
+    def __init__(self, lxns_reason: str, fish_reason: str):
+        super().__init__()
+        # 摘要本身可能带句号；嵌进括号后再补标点会变成「。；」，先去掉尾部标点
+        self.lxns_reason = str(lxns_reason or "未知原因").strip().rstrip("。；; ")
+        self.fish_reason = str(fish_reason or "未知原因").strip().rstrip("。；; ")
+        self.hx_reason = (
+            "落雪与水鱼都没有返回可用的成绩数据"
+            f"（落雪：{self.lxns_reason}；水鱼：{self.fish_reason}）。"
+        )
+        self.hx_suggestion = (
+            "请稍后重试；如果只有一侧持续失败，请检查该侧的绑定、授权或凭证。"
+        )
 
 
 class MaimaiTransportError(MaimaiError):

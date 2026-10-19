@@ -165,7 +165,7 @@ def music_picture(music_id: Union[int, str]) -> Path:
     1. 直接查找 {music_id}.png（自动检测损坏并删除）
     2. 若 music_id > 100000（宴会场），尝试 {music_id - 100000}.png
     3. 若 0 < music_id < 10000（可能是落雪SD），尝试 {music_id + 10000}.png（水鱼DX）
-    4. 若 10000 < music_id <= 11000（可能是水鱼DX），尝试 {music_id - 10000}.png（落雪SD）
+    4. 若 10000 < music_id < 100000（可能是水鱼DX），尝试 {music_id - 10000}.png（落雪SD）
     5. 回退到默认占位图 0.png → 11000.png
     
     损坏自动修复: 每次访问都会用魔数校验文件有效性，损坏文件自动删除并继续查找。
@@ -192,8 +192,10 @@ def music_picture(music_id: Union[int, str]) -> Path:
         if _check_and_clean_corrupted(path3):
             return path3
     
-    # 策略4: 水鱼 DX ID（10000~11000）→ 尝试落雪原生 ID (ID-10000)
-    if 10000 < music_id <= 11000:
+    # 策略4: 水鱼 DX ID（10000 < ID < 100000）→ 尝试落雪原生 ID (ID-10000)
+    # 上限曾写死 11000，曲库扩容（水鱼 DX ID 已到 11817+）后新曲直接掉到占位图；
+    # 宴会场（> 100000）已在策略 2 处理，故安全区间到 100000 为止。
+    if 10000 < music_id < 100000:
         lxns_sd_id = music_id - 10000
         path4 = coverdir / f'{lxns_sd_id}.png'
         if _check_and_clean_corrupted(path4):

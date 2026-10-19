@@ -334,6 +334,8 @@ def sources_label(meta: dict) -> str:
             return "仅落雪"
         if fish.get("error_type") == "OAuthConsentRequiredError":
             return "仅落雪（水鱼未授权）"
+        if fish.get("error_type") == "merge_failed":
+            return "仅落雪（合并异常，已回退单源）"
         if fish.get("error_type") == "NoData":
             return "仅落雪（水鱼无成绩数据）"
         error = str(fish.get("error") or "").strip()

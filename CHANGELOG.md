@@ -1,5 +1,60 @@
 # Changelog
 
+## [2026-10-19] - b50 修复（双源容错 / 定数回填 / 曲绘 ID 映射）
+
+### Fixed
+
+- **双源全失败时同时保留两侧原因**（`libraries/maimaidx_api_data.py`）：以前永远
+  优先抛落雪侧异常，水鱼是未授权、超时还是凭证问题都被吞掉。现在两源都没有可用
+  结果时抛 `AllSourcesFailedError`，复用 `summarize_error()` 生成「落雪：…；水鱼：…」；
+  「未配置 lxnstoken 抛水鱼侧错误」的特例保持不变。
+- **已绑定但未同步成绩不再报「没有找到玩家」**（`libraries/maimaidx_error.py` /
+  `libraries/maimaidx_api_data.py`）：落雪资料端点已返回 `friend_code`、成绩端点却
+  返回 400/404 时抛新增的 `ScoreNotSyncedError`（HX-MAI-005），提示去落雪同步成绩；
+  资料端点本身未命中仍沿用 `UserNotFoundError(source=...)` 原文案。
+- **单条脏成绩不再拖垮整源**（`libraries/maimaidx_api_data.py`）：新增
+  `_parse_chart_list`，逐条解析、坏记录跳过并计数，好记录照常汇总；某源全部记录
+  都无法解析时才按 `MaimaiDataFormatError` 计为该源失败，另一源继续出图。
+- **合并阶段异常不再中断 B50**（`libraries/maimaidx_api_data.py` /
+  `libraries/maimaidx_merge.py`）：`merge_b50` 抛异常时回退落雪（无则水鱼）单源结果，
+  `sources_label()` 标注「仅落雪（合并异常，已回退单源）」。
+- `tests/test_b50_sources.py`：新增 10 个用例锁定上述行为。
+- **资料端点 200 但无 `friend_code` 不再误报「没有找到玩家」**（`libraries/maimaidx_api_data.py`）：
+  分流判据从「是否解析出 `friend_code`」改为「资料端点是否返回 200」；资料存在而成绩端点
+  返回 400/404 时统一抛 `ScoreNotSyncedError`，资料端点本身未命中的
+  `UserNotFoundError(source=...)` 文案逐字不变。
+- **整桶解析失败 / 200 空源不再静默计为成功**（`libraries/maimaidx_api_data.py` /
+  `libraries/maimaidx_error.py`）：按桶记录原始条目数，某桶原本有条目却解析出 0 条时判该源
+  `MaimaiDataFormatError`，不再静默少 15 首；两桶原本都为空时新增 `NoScoresDataError`
+  （`user_expected=True`），双源汇总的 `meta` 标 `error_type="NoData"`，两源都无成绩时
+  直接给用户态提示，不画空图。
+- **`AllSourcesFailedError` 不再每次查询写诊断文件**（`libraries/maimaidx_error.py`）：
+  设为 `user_expected=True`，改走用户态分支（仅告警日志），避免高频查询刷爆
+  `data/diagnostics` 与 ERROR 日志。
+- `tests/test_b50_sources.py`：反转「资料无 `friend_code` 断言 `UserNotFoundError`」的
+  锁 bug 用例，新增 9 个用例覆盖整桶损坏、空桶、200 空源、双源 NoData 与用户态诊断行为；
+  全套 141 → **150 OK (skipped=3)**。
+- **定数不再被本地空值覆盖**（`libraries/maimaidx_best_50.py`）：上游接口本来就返回
+  了有效 `ds`，但出图前只要本地曲库有该难度，就用 `music.ds[level_index]` **无条件覆盖**；
+  本地对新曲缺数据时该位置是 0，于是图上出现 `0.0 -> 311`（rating 有值、定数被抹掉）。
+  现改为只有本地取到有效值（`> 0`）才覆盖，否则保留上游值；新增 `_coerce_ds` 兼容
+  本地曲库偶发的 `str`/`int` 定数，避免 `TypeError`。「未找到定数」告警现在只在
+  本地与 DX `+10000` 兜底都拿不到时才触发，语义更准。
+- **新曲曲绘不再直落占位图**（`libraries/image.py`）：`music_picture()` 的策略 4 把
+  水鱼 DX ID 的映射上限写死成 `<= 11000`。曲库扩容后 DX ID 已到 `11817+`
+  （= 落雪 `1817` + 10000），代码根本不会去试 `1817.png`，直接掉进占位图——表现为
+  成批连续 ID 的新曲缺封面。上限放宽为 `< 100000`（宴会场 `> 100000` 已由策略 2 处理），
+  docstring 同步更正。
+- `tests/test_b50_render.py`：新增 11 个用例锁定定数回填与 ID 映射（含旧上限 11000 的
+  回归用例 `11817 -> 1817.png`）。
+- `tests/test_b50_appendix.py`：`TOP_DEFS` 白名单补入 `_coerce_ds` /
+  `_fill_missing_chart_levels`——该套件按名字 AST 抽取生产定义后 exec，白名单漏收
+  会让 `generate` 体内引用 `NameError`，整个 appendix 套件 33 例全崩。
+
+### Notes
+
+- 既有降级出图、`sources_label()` 常规标注、AP50 仅落雪、401/403 分流保持不变。
+
 ## [2026-10-06] - b50 尾随锐评标记（P5b 补）
 
 ### Fixed

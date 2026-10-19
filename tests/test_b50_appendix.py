@@ -82,6 +82,10 @@ TOP_DEFS = frozenset({
     "_sample_background_palette",
     "_ctx_accepts",
     "_appendix_identity",
+    # generate() 依赖的两个定数回填 helper（2026-10-19 新增，必须一并 exec，
+    # 否则 generate 体内引用会 NameError —— 白名单漏收会静默炸掉整个 appendix 套件）
+    "_coerce_ds",
+    "_fill_missing_chart_levels",
     "appendix_provider_available",
     "appendix_absent_notice",
     "_take_provider_notice",

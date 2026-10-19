@@ -66,6 +66,41 @@ def _find_local_chart_music(song_id: int | str, chart_type: str):
             return offset
     return exact
 
+
+def _coerce_ds(value: Any) -> float:
+    """定数字段的宽松数值化：本地曲库偶尔给 ``int`` / ``str``，解析失败按 0（缺失）处理。"""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _fill_missing_chart_levels(charts: List[ChartInfo]) -> None:
+    """用本地曲库回填谱面定数；本地缺失（0）时保留上游接口给的有效值。
+
+    上游 ``maimaidx_api_data`` 本来就带 ``ds``，只是本地曲库对新曲/新难度可能
+    还没有数据。无条件覆盖会把图上定数写成 0（``0.0 -> xxx``），所以只有本地
+    取到有效值（> 0）时才覆盖。
+    """
+    for chart in charts:
+        chart.ds = _coerce_ds(chart.ds)
+        music = _find_local_chart_music(chart.song_id, chart.type)
+        if music:
+            chart.song_id = int(music.id)
+            if 0 <= chart.level_index < len(music.ds):
+                local_ds = _coerce_ds(music.ds[chart.level_index])
+                if local_ds > 0:
+                    chart.ds = local_ds
+        # DX 谱面可能使用 song_id + 10000 作为独立 ID
+        if not chart.ds and chart.type.lower() == 'dx':
+            dx_music = mai.total_list.by_id(str(chart.song_id + 10000))
+            if dx_music:
+                chart.song_id = int(dx_music.id)
+                if 0 <= chart.level_index < len(dx_music.ds):
+                    chart.ds = _coerce_ds(dx_music.ds[chart.level_index])
+        if not chart.ds:
+            log.warning(f"[b50] 未找到定数: song_id={chart.song_id}, level_index={chart.level_index}, type={chart.type}")
+
 class ScoreBaseImage:
     
     text_color = (124, 129, 255, 255)
@@ -717,21 +752,7 @@ async def generate(
         qqid = None
     userinfo, meta = await maiApi.query_user_b50_merged(qqid=qqid, username=username, is_ap=is_ap)
 
-    for chart in (userinfo.charts.sd or []) + (userinfo.charts.dx or []):
-        music = _find_local_chart_music(chart.song_id, chart.type)
-        if music:
-            chart.song_id = int(music.id)
-            if 0 <= chart.level_index < len(music.ds):
-                chart.ds = music.ds[chart.level_index]
-        # DX 谱面可能使用 song_id + 10000 作为独立 ID
-        if not chart.ds and chart.type.lower() == 'dx':
-            dx_music = mai.total_list.by_id(str(chart.song_id + 10000))
-            if dx_music:
-                chart.song_id = int(dx_music.id)
-                if 0 <= chart.level_index < len(dx_music.ds):
-                    chart.ds = dx_music.ds[chart.level_index]
-        if not chart.ds:
-            log.warning(f"[b50] 未找到定数: song_id={chart.song_id}, level_index={chart.level_index}, type={chart.type}")
+    _fill_missing_chart_levels((userinfo.charts.sd or []) + (userinfo.charts.dx or []))
 
     draw_best = DrawBest(userinfo, qqid, is_ap, effective_source(meta))
     image = await draw_best.draw()

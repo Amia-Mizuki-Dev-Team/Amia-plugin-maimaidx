@@ -6,9 +6,12 @@ from loguru import logger as log
 from ..config import maiconfig
 from .maimaidx_types import SourceName, lxns_song_target, normalize_source
 from .maimaidx_error import (
+    AllSourcesFailedError,
     MaimaiDataFormatError,
     MaimaiTimeoutError,
+    NoScoresDataError,
     MaimaiRequestError,
+    ScoreNotSyncedError,
     ServerError,
     TokenNotFoundError,
     UserDisabledQueryError,
@@ -109,6 +112,47 @@ def _chart_info(payload: dict, *, source: SourceName, default_type: str) -> Char
         source=source,
         ra=int(payload.get("ra", payload.get("dx_rating", 0)) or 0),
     )
+
+
+def _parse_chart_list(
+    items: Any,
+    *,
+    source: SourceName,
+    default_type: str,
+    stage: str,
+    qqid: Optional[int] = None,
+) -> tuple[list[ChartInfo], int]:
+    """Normalize one source's chart list, skipping malformed records.
+
+    A single dirty record (string id, null achievement, wrong shape) must not
+    fail the whole source: the remaining records still contribute to B50.
+    Returns ``(parsed, skipped)`` so callers can fail the source only when it
+    produced no usable record at all.
+    """
+    if items is None:
+        return [], 0
+    if not isinstance(items, list):
+        raise MaimaiDataFormatError()
+    parsed: list[ChartInfo] = []
+    skipped = 0
+    for item in items:
+        if not isinstance(item, dict):
+            skipped += 1
+            continue
+        try:
+            parsed.append(_chart_info(item, source=source, default_type=default_type))
+        except (TypeError, ValueError, KeyError, AttributeError, OverflowError) as e:
+            skipped += 1
+            log.warning(
+                f"[{stage}/{source}] 跳过无法解析的成绩记录(qq={qqid}): "
+                f"{type(e).__name__}: {e}"
+            )
+    if skipped:
+        log.warning(
+            f"[{stage}/{source}] 共跳过 {skipped} 条无法解析的成绩记录，"
+            f"其余 {len(parsed)} 条正常汇总"
+        )
+    return parsed, skipped
 
 
 class RecordsResult(list[ChartInfo]):
@@ -578,6 +622,7 @@ class MaiApi:
                 raise UserNotFoundError(source=selected)
             try:
                 profile = {}
+                profile_ok = False
                 # 先通过 QQ 获取 friend_code 和资料（用于头像框渲染）
                 async with httpx.AsyncClient(timeout=15) as client:
                     profile_res = await client.get(
@@ -597,6 +642,7 @@ class MaiApi:
                     pdata = profile_res.json().get("data", {})
                     friend_code = pdata.get("friend_code")
                     profile = pdata
+                    profile_ok = True
                 else:
                     friend_code = None
                     log.warning(f"[{stage}/落雪资料] 断点: qq={qqid} 资料接口返回 HTTP {profile_res.status_code}，改用 QQ 端点查询 bests")
@@ -617,13 +663,42 @@ class MaiApi:
                     res = await client.get(endpoint, headers=self.headers)
 
                 if res.status_code == 200:
-                    data = res.json().get("data", {})
-                    sd_list = []
-                    dx_list = []
-                    for c in data.get("standard", []):
-                        sd_list.append(_chart_info(c, source="lxns", default_type="standard"))
-                    for c in data.get("dx", []):
-                        dx_list.append(_chart_info(c, source="lxns", default_type="dx"))
+                    try:
+                        payload = res.json()
+                    except ValueError as e:
+                        raise MaimaiDataFormatError() from e
+                    data = payload.get("data", {}) if isinstance(payload, dict) else {}
+                    if not isinstance(data, dict):
+                        raise MaimaiDataFormatError()
+                    sd_raw = data.get("standard", [])
+                    dx_raw = data.get("dx", [])
+                    sd_list, _ = _parse_chart_list(
+                        sd_raw,
+                        source="lxns",
+                        default_type="standard",
+                        stage=stage,
+                        qqid=qqid,
+                    )
+                    dx_list, _ = _parse_chart_list(
+                        dx_raw,
+                        source="lxns",
+                        default_type="dx",
+                        stage=stage,
+                        qqid=qqid,
+                    )
+                    # 某桶原本有条目却一条都没解析出来，说明该源格式异常；
+                    # 不能把它当成「这一桶本来就没有成绩」继续 ok=True。
+                    if (sd_raw and not sd_list) or (dx_raw and not dx_list):
+                        _log_score_breakpoint(
+                            f"{stage}/落雪bests", f"GET {endpoint} 成绩桶无法解析",
+                            status=res.status_code, qqid=qqid,
+                        )
+                        raise MaimaiDataFormatError()
+                    if not sd_list and not dx_list:
+                        log.warning(
+                            f"[{stage}/落雪bests] qq={qqid} 资料存在但两桶成绩为空，按 NoData 处理"
+                        )
+                        raise NoScoresDataError()
                     return UserInfo(
                         nickname=profile.get("name", username or str(qqid)),
                         rating=data.get("total", data.get("standard_total", 0) + data.get("dx_total", 0)),
@@ -633,8 +708,12 @@ class MaiApi:
                         charts=Data(sd=sd_list[:35], dx=dx_list[:15])
                     )
                 if res.status_code in {400, 404}:
-                        _log_score_breakpoint(f"{stage}/落雪bests", f"GET {endpoint}", status=res.status_code, qqid=qqid)
-                        raise UserNotFoundError(source=selected)
+                    _log_score_breakpoint(f"{stage}/落雪bests", f"GET {endpoint}", status=res.status_code, qqid=qqid)
+                    if friend_code or profile_ok:
+                        # 资料端点 200 已证明玩家存在；无 friend_code 只说明资料
+                        # 不全/未同步，不能退回成「没有找到玩家」
+                        raise ScoreNotSyncedError()
+                    raise UserNotFoundError(source=selected)
                 if res.status_code in {401, 403}:
                     _log_score_breakpoint(f"{stage}/落雪bests", f"GET {endpoint}", status=res.status_code, qqid=qqid)
                     self._raise_lxns_auth_error(res.status_code)
@@ -643,7 +722,7 @@ class MaiApi:
                     raise ServerError()
                 _log_score_breakpoint(f"{stage}/落雪bests", f"GET {endpoint}", status=res.status_code, qqid=qqid)
                 raise ServerError()
-            except (TokenNotFoundError, UserNotFoundError, UserDisabledQueryError, ServerError):
+            except (TokenNotFoundError, UserNotFoundError, UserDisabledQueryError, ServerError, MaimaiDataFormatError, ScoreNotSyncedError, NoScoresDataError):
                 raise
             except (httpx.TimeoutException, TimeoutError) as e:
                 _log_score_breakpoint(f"{stage}/落雪", "网络请求超时", qqid=qqid, error=e)
@@ -675,13 +754,40 @@ class MaiApi:
                 _log_score_breakpoint(f"{stage}/水鱼", f"POST {FISH_BASE}/query/player", qqid=qqid, username=username, error=e)
                 raise ServerError() from e
         if res.status_code == 200:
-            raw = res.json()
-            sd_list = []
-            dx_list = []
-            for c in raw.get("charts", {}).get("sd", []):
-                sd_list.append(_chart_info(c, source="diving-fish", default_type="standard"))
-            for c in raw.get("charts", {}).get("dx", []):
-                dx_list.append(_chart_info(c, source="diving-fish", default_type="dx"))
+            try:
+                raw = res.json()
+            except ValueError as e:
+                raise MaimaiDataFormatError() from e
+            if not isinstance(raw, dict):
+                raise MaimaiDataFormatError()
+            charts = raw.get("charts", {})
+            if not isinstance(charts, dict):
+                raise MaimaiDataFormatError()
+            sd_raw = charts.get("sd", [])
+            dx_raw = charts.get("dx", [])
+            sd_list, _ = _parse_chart_list(
+                sd_raw,
+                source="diving-fish",
+                default_type="standard",
+                stage=stage,
+                qqid=qqid,
+            )
+            dx_list, _ = _parse_chart_list(
+                dx_raw,
+                source="diving-fish",
+                default_type="dx",
+                stage=stage,
+                qqid=qqid,
+            )
+            if (sd_raw and not sd_list) or (dx_raw and not dx_list):
+                _log_score_breakpoint(
+                    f"{stage}/水鱼", f"POST {FISH_BASE}/query/player 成绩桶无法解析",
+                    status=res.status_code, qqid=qqid, username=username,
+                )
+                raise MaimaiDataFormatError()
+            if not sd_list and not dx_list:
+                log.warning(f"[{stage}/水鱼] 成绩桶为空，按 NoData 处理")
+                raise NoScoresDataError()
             return UserInfo(
                 nickname=raw.get("nickname", username or str(qqid)),
                 rating=raw.get("rating", 0),
@@ -713,8 +819,11 @@ class MaiApi:
         并发拉取落雪与水鱼 B50，逐谱面汇总后返回。
 
         单源 MaimaiError/异常自动降级为另一源单源结果（is_ap 时水鱼侧直接
-        不参与，水鱼公开 B50 没有 AP50 数据）；两源全部失败时抛落雪侧错误，
-        未配置 lxnstoken 时抛水鱼侧错误，保持既有错误语义。
+        不参与，水鱼公开 B50 没有 AP50 数据）；两源全部失败时抛同时携带
+        两侧原因摘要的 ``AllSourcesFailedError``，未配置 lxnstoken 时仍抛
+        水鱼侧错误，保持既有错误语义。某源 200 但两桶成绩为空时记为该源
+        ``NoData``；两源都无成绩时抛 ``NoScoresDataError``，不画空图。
+        合并阶段自身异常时回退到单源结果，不中断整条 B50。
         返回 ``(UserInfo, meta)``，meta 描述每源成功与否及失败原因摘要。
         """
         from .maimaidx_merge import LABEL_FISH, LABEL_LXNS, merge_b50, summarize_error
@@ -732,30 +841,64 @@ class MaiApi:
         )
         lxns_exc = lxns_res if isinstance(lxns_res, BaseException) else None
         fish_exc = fish_res if isinstance(fish_res, BaseException) else None
+        lxns_ok = lxns_exc is None and lxns_res is not None
+        fish_ok = fish_exc is None and fish_res is not None
 
-        if (lxns_exc is not None or lxns_res is None) and (fish_exc is not None or fish_res is None):
+        if not lxns_ok and not fish_ok:
+            # 未配置 lxnstoken 时保留既有语义：抛水鱼侧的真实错误
             if isinstance(lxns_exc, TokenNotFoundError) and fish_exc is not None:
                 raise fish_exc
-            if lxns_exc is not None:
-                raise lxns_exc
-            if fish_exc is not None:
-                raise fish_exc
-            raise ServerError()
+            if isinstance(lxns_exc, NoScoresDataError) and isinstance(fish_exc, NoScoresDataError):
+                # 双源都没有成绩：给用户态提示，不要合并出空图
+                raise NoScoresDataError()
+            if is_ap and fish_exc is None:
+                # AP50 下水鱼主动不参与，只保留落雪侧原因
+                if lxns_exc is not None:
+                    raise lxns_exc
+                raise ServerError()
+            lxns_reason = summarize_error(lxns_exc) if lxns_exc is not None else "无可用数据"
+            fish_reason = summarize_error(fish_exc) if fish_exc is not None else "无可用数据"
+            raise AllSourcesFailedError(lxns_reason, fish_reason)
 
-        userinfo, meta = merge_b50(
-            None if lxns_exc is not None else lxns_res,
-            None if fish_exc is not None else fish_res,
-        )
+        try:
+            userinfo, meta = merge_b50(
+                lxns_res if lxns_ok else None,
+                fish_res if fish_ok else None,
+            )
+        except Exception as merge_exc:
+            # merge_b50 在 gather 之外，合并阶段的异常不能中断整条 B50
+            log.warning(
+                f"双源 B50 合并失败，回退单源结果: "
+                f"{type(merge_exc).__name__}: {merge_exc}"
+            )
+            meta = {
+                LABEL_LXNS: {"ok": lxns_ok, "error": None, "error_type": None},
+                LABEL_FISH: {"ok": fish_ok, "error": None, "error_type": None},
+            }
+            if lxns_ok:
+                userinfo = lxns_res
+                if fish_ok:
+                    meta[LABEL_FISH].update(
+                        ok=False, error="合并异常", error_type="merge_failed"
+                    )
+            elif fish_ok:
+                userinfo = fish_res
+            else:  # pragma: no cover - 上面的双源全失败分支已经拦截
+                raise
         for label, result in ((LABEL_LXNS, lxns_res), (LABEL_FISH, fish_res)):
             entry = meta.get(label)
             if entry is None:
                 continue
             if isinstance(result, BaseException):
-                entry.update(
-                    ok=False,
-                    error=summarize_error(result),
-                    error_type=type(result).__name__,
-                )
+                if isinstance(result, NoScoresDataError):
+                    # 源返回 200 但两桶为空：标 NoData，不能算「成功但 0 首」
+                    entry.update(ok=False, error="未返回成绩数据", error_type="NoData")
+                else:
+                    entry.update(
+                        ok=False,
+                        error=summarize_error(result),
+                        error_type=type(result).__name__,
+                    )
             elif result is None:
                 # is_ap 时水鱼侧主动不参与，标注为“不适用”而非“失败”
                 entry.update(ok=False, error=None, error_type="not_applicable")
