@@ -13,6 +13,16 @@ _corrupted_cover_ids: set = set()
 
 
 
+def forget_corrupted_cover(song_id: Union[int, str]) -> None:
+    """解除某曲绘的损坏记录。
+
+    下载器写出有效文件、或校验发现本地文件已恢复有效时调用——损坏记录
+    只用于「本次运行内少做无用功」，绝不能变成永久拉黑（否则重新下载的
+    有效文件会在下次读取时被无条件删掉）。
+    """
+    _corrupted_cover_ids.discard(str(song_id))
+
+
 def _check_and_clean_corrupted(path: Path) -> bool:
     """
     检查文件是否为有效图片，若损坏则删除。
@@ -21,21 +31,21 @@ def _check_and_clean_corrupted(path: Path) -> bool:
     if not path.exists():
         return False
     sid = path.stem  # 文件名（不含扩展名）
-    if sid in _corrupted_cover_ids:
-        path.unlink(missing_ok=True)
-        return False
+    # 先按内容判断：文件可能已被重新下载修复，命中过黑名单不代表它现在还是坏的
     try:
-        data = path.read_bytes()[:16]
-        if not is_valid_image(data):
-            log.warning(f"曲绘 {path.name} 已损坏（魔数不正确），自动删除并降级")
-            _corrupted_cover_ids.add(sid)
-            path.unlink(missing_ok=True)
-            return False
-        return True
-    except Exception:
-        _corrupted_cover_ids.add(sid)
+        if is_valid_image(path.read_bytes()[:16]):
+            forget_corrupted_cover(sid)
+            return True
+    except OSError:
+        pass
+    if sid not in _corrupted_cover_ids:
+        log.warning(f"曲绘 {path.name} 已损坏（魔数不正确），自动删除并降级")
+    _corrupted_cover_ids.add(sid)
+    try:
         path.unlink(missing_ok=True)
-        return False
+    except OSError:
+        pass
+    return False
 
 
 class DrawText:

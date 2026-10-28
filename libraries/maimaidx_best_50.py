@@ -15,6 +15,7 @@ from loguru import logger as log
 
 from ..config import *
 from .image import DrawText, image_to_base64, music_picture
+from .lib_music_db import ensure_covers
 from .maimaidx_api_data import maiApi
 from .maimaidx_error import *
 from .maimaidx_model import ChartInfo, PlayInfoDefault, PlayInfoDev, UserInfo
@@ -73,6 +74,24 @@ def _coerce_ds(value: Any) -> float:
         return float(value)
     except (TypeError, ValueError):
         return 0.0
+
+
+_COVER_SIZE = (75, 75)
+_COVER_PLACEHOLDER_RGBA = (72, 72, 72, 255)
+
+
+def _load_cover_image(song_id: Union[int, str]) -> Image.Image:
+    """读一张 75x75 曲绘；缺图/损坏时退化到内存灰色占位，绝不让整张图失败。
+
+    曲绘自愈（``ensure_covers``）只能尽量减少缺图，磁盘随时可能还有漏网的
+    （下载被墙、曲库刚扩容）。这里必须兜住 ``FileNotFoundError`` / 解码错误。
+    """
+    try:
+        with Image.open(music_picture(song_id)) as cover:
+            return cover.convert('RGBA').resize(_COVER_SIZE)
+    except Exception as exc:  # noqa: BLE001 - 缺图与坏图都只能退化，不能中断绘制
+        log.warning(f"[b50] 曲绘 {song_id} 不可用，使用灰色占位: {exc!r}")
+        return Image.new('RGBA', _COVER_SIZE, _COVER_PLACEHOLDER_RGBA)
 
 
 def _fill_missing_chart_levels(charts: List[ChartInfo]) -> None:
@@ -202,7 +221,7 @@ class ScoreBaseImage:
                 #   阈值会判成 b15 —— 所以 coach 不重排，只吃这里记下来的顺序）。
                 self._draw_order.append((bucket, num + 1, info))
 
-            cover = Image.open(music_picture(info.song_id)).resize((75, 75))
+            cover = _load_cover_image(info.song_id)
             type_name = 'SD' if info.type.lower() == 'standard' else info.type.upper()
             version = Image.open(maidir / f'{type_name}.png').resize((37, 14))
             if info.rate.islower():
@@ -383,6 +402,15 @@ class DrawBest(ScoreBaseImage):
             self._tb.draw(570, 172, 17, f'B35: {sdrating} + B15: {dxrating} = {self.Rating}', (0, 0, 0, 255), 'mm', 3, (255, 255, 255, 255))
 
         draw_attribution(self._sy, self._im.size[0], 1570, self.source, self.text_color)
+
+        # 曲绘自愈：只补这张图要画的曲目（有界：并发 5 / 总 15s），失败忽略，
+        # 补不到的由 _load_cover_image 用内存占位图兜底。
+        try:
+            await ensure_covers(
+                [c.song_id for c in self.sdBest] + [c.song_id for c in self.dxBest]
+            )
+        except Exception as exc:  # noqa: BLE001 - 补图失败不影响出图
+            log.warning(f"[b50] 曲绘按需补缺失败（忽略）: {exc!r}")
 
         # 桶语义（唯一依据 libraries/maimaidx_merge.py:11-12）：sd/standard = 旧版本
         # 乐曲 B35，dx = 现版本乐曲 B15 —— 按版本划分，**不是** SD/DX 谱面类型。

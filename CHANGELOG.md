@@ -1,5 +1,20 @@
 # Changelog
 
+## [2026-10-28] - B50 曲绘自愈 / 双源并发验证
+
+### Fixed
+
+- **曲绘同步不再被 `.cover_sync_done` 的文件数标记短路**（`libraries/lib_music_db.py`）：改为按 musicDB 曲目键逐键校验/补缺，新曲（如 1817 / 11817）会被重新下载；标记只作附带信息。
+- **损坏曲绘黑名单可解除**（`libraries/image.py`）：重新下载或校验有效后移除记录，不再永久删除有效文件。
+- **水鱼曲绘 URL 统一归一化**（`libraries/lib_music_db.py` / `libraries/maimaidx_music.py`）：`10000..99999` 减 10000、宴会场 `>=100000` 原样，降级分支不再 `% 10000`。
+- **B50 渲染按需补图**（`libraries/maimaidx_best_50.py`）：绘制前对本图缺失曲绘做有界补下（并发 5 / 总 15s），`Image.open` 失败时使用内存灰色占位，缺图不再中断整图。
+- **宴会场曲绘一次性迁移**（`libraries/lib_music_db.py`）：`.cover_sync_done` 升级为 `v2:<count>`；升级后首次启动会清理旧版 `%10000` 写脏的宴会场曲绘并按水鱼精确 id 重下。
+- **曲绘原子落盘**（`libraries/lib_music_db.py`）：临时文件 + 魔数校验 + `os.replace`，中断/并发不会留下半截最终文件。
+
+### Tests
+
+- 新增 `tests/test_cover_selfheal.py`（19 例）；`tests/test_b50_sources.py` 补双源并发重叠与单源异常仍出图用例。
+
 ## [2026-10-19] - b50 修复（双源容错 / 定数回填 / 曲绘 ID 映射）
 
 ### Fixed

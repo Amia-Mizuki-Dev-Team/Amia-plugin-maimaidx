@@ -109,7 +109,13 @@ def _load_levels_module(local_lookup, dx_by_id) -> types.ModuleType:
 def _load_image_module() -> types.ModuleType:
     return _pick_module(
         IMAGE_FILE,
-        {"_corrupted_cover_ids", "is_valid_image", "_check_and_clean_corrupted", "music_picture"},
+        {
+            "_corrupted_cover_ids",
+            "is_valid_image",
+            "_check_and_clean_corrupted",
+            "forget_corrupted_cover",
+            "music_picture",
+        },
         {"Path": Path, "Union": Union, "log": _LogStub(), "coverdir": Path("__unset__")},
         "_image_under_test",
     )

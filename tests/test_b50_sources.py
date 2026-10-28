@@ -525,6 +525,60 @@ class B50SourceFallbackTests(unittest.TestCase):
         self.assertEqual(len(messages), 1)
         self.assertIn("没有找到玩家", messages[0])
 
+    # ------------------------------------------------------------------
+    # 并行取数：两源必须同时启动；单源异常时另一源的结果照常出图
+    # ------------------------------------------------------------------
+
+    def _overlap_clients(self, failing: set):
+        """两个 mock 源互相等对方的「已启动」事件，串行实现会直接超时。"""
+
+        async def scenario():
+            entered = {"lxns": asyncio.Event(), "diving-fish": asyncio.Event()}
+            concurrency_log = []
+
+            async def fake_query(_self, qqid=None, username=None, *, source, is_ap=False):
+                entered[source].set()
+                other = "diving-fish" if source == "lxns" else "lxns"
+                # 串行实现走到这里会一直等到 timeout，测试失败而不是挂死
+                await asyncio.wait_for(entered[other].wait(), timeout=2)
+                concurrency_log.append(source)
+                if source in failing:
+                    raise self.errors.ServerError()
+                song_id = 1736 if source == "lxns" else 1737
+                return self._user(f"{source}玩家", song_id, source=source)
+
+            with patch.object(self.api.MaiApi, "query_user_b50", fake_query):
+                userinfo, meta = await self.api.MaiApi().query_user_b50_merged(qqid=12345)
+            return userinfo, meta, entered, concurrency_log
+
+        return scenario
+
+    def test_both_sources_start_concurrently(self):
+        userinfo, meta, entered, log = asyncio.run(self._overlap_clients(set())())
+
+        # 两源都走到了 barrier → 确实同时在跑（asyncio.gather）
+        self.assertTrue(entered["lxns"].is_set())
+        self.assertTrue(entered["diving-fish"].is_set())
+        self.assertEqual(sorted(log), ["diving-fish", "lxns"])
+        self.assertTrue(meta["lxns"]["ok"])
+        self.assertTrue(meta["diving-fish"]["ok"])
+        charts = (userinfo.charts.sd or []) + (userinfo.charts.dx or [])
+        self.assertEqual(sorted(c.song_id for c in charts), [1736, 1737])
+
+    def test_one_source_exception_still_yields_other_result(self):
+        userinfo, meta, entered, _ = asyncio.run(
+            self._overlap_clients({"diving-fish"})()
+        )
+
+        # 水鱼在落雪已启动后抛错；落雪的结果必须完整留下来（这张图照样能出）
+        self.assertTrue(entered["lxns"].is_set())
+        self.assertFalse(meta["diving-fish"]["ok"])
+        self.assertEqual(meta["diving-fish"]["error_type"], "ServerError")
+        self.assertTrue(meta["lxns"]["ok"])
+        charts = (userinfo.charts.sd or []) + (userinfo.charts.dx or [])
+        self.assertEqual([c.song_id for c in charts], [1736])
+        self.assertEqual(userinfo.nickname, "lxns玩家")
+
 
 if __name__ == "__main__":
     unittest.main()

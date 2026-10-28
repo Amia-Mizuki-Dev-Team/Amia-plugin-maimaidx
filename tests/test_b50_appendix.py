@@ -238,6 +238,8 @@ def _load_namespace(**extra: Any) -> dict:
         "anyio": anyio, "ChartInfo": ChartInfo,
         "PlayInfoDefault": ChartInfo, "PlayInfoDev": ChartInfo,
         "music_picture": lambda sid: f"cover/{sid}.png",
+        # 附录测试只钉绘制顺序/几何；曲绘加载走真实实现之外的固定 75x75 占位
+        "_load_cover_image": lambda song_id: Image.new("RGBA", (75, 75), (72, 72, 72, 255)),
         "maidir": Path("maidir"),
         "score_Rank_l": {}, "fcl": {}, "fsl": {},
         "_find_local_chart_music": lambda song_id, chart_type: None,
