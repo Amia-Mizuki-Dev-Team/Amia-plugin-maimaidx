@@ -1,5 +1,15 @@
 # Changelog
 
+## [2026-10-30] - 占位图曲绘不落盘 / 缓存自愈
+
+### Added / Fixed
+
+- **占位图签名黑名单**（`libraries/image.py`）：以 `cover/0.png` / `cover/11000.png` 的 SHA-256 为签名（模块加载时计算、进程内缓存，来源缺失时空黑名单优雅降级）；提供 `is_placeholder_bytes` / `is_placeholder_cover_file` / `refresh_placeholder_signatures`。
+- **下载侧拦截**（`libraries/lib_music_db.py`）：`_atomic_write_cover` 对命中签名的字节流不落盘；`_cover_file_ok` 判占位文件无效；两个下载器"已有有效文件"早退统一走 `_cover_file_ok` → 上游解禁后下一轮同步自动补真图。
+- **缓存侧自愈**（`libraries/image.py` `_check_and_clean_corrupted`）：哈希精确命中的已污染缓存删除重下（来源文件豁免；unlink 前比对 `(st_mtime_ns, st_size)` 收窄 TOCTOU 窗口）。
+- **启动清理豁免**（`__init__.py`）：清理循环按 `_PLACEHOLDER_SOURCES` 跳过黑名单来源文件，防止未来占位资源变小时被误删导致黑名单静默为空。
+- **降级路径接入占位判定**（`libraries/maimaidx_music.py`）：已有文件跳过条件追加 `not _cover_file_ok(dst)`，已污染缓存可被水鱼降级重下覆盖。
+
 ## [2026-10-28] - B50 曲绘自愈 / 双源并发验证
 
 ### Fixed
