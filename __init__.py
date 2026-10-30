@@ -101,9 +101,12 @@ async def get_music():
     if music_db_path.exists():
         await music_db_cache.load(music_db_path)
         # 清理已损坏的曲绘（大小 < 5KB 或魔数不正确的文件）
-        from .libraries.image import is_valid_image, _corrupted_cover_ids
+        from .libraries.image import is_valid_image, _corrupted_cover_ids, _PLACEHOLDER_SOURCES
         cleaned = 0
         for f in coverdir.glob('*.png'):
+            # 占位资源文件是签名黑名单的来源，删掉会让下一进程的黑名单静默为空
+            if f.name in _PLACEHOLDER_SOURCES:
+                continue
             if f.stat().st_size < 5000:
                 _corrupted_cover_ids.add(f.stem)
                 f.unlink(missing_ok=True)

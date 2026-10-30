@@ -1,6 +1,7 @@
 import base64
+import hashlib
 from io import BytesIO
-from typing import Tuple, Union
+from typing import Optional, Tuple, Union
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont, ImageOps
@@ -11,6 +12,67 @@ from ..config import SHANGGUMONO, Path, coverdir, log
 _corrupted_cover_ids: set = set()
 
 
+
+
+# ==========================================
+# 占位图签名黑名单（曲绘下载 / 有效性判定共用）
+# ==========================================
+# 上游 CDN（落雪 assets2 / 水鱼 covers）在新曲未解禁时会返回占位图（滚木/蓝
+# maimai logo）。占位图是合法 PNG、大小也正常，魔数与文件大小都分辨不出来，
+# 一旦被当有效封面缓存就永不重下。这里以本地占位资源文件（0.png / 11000.png）
+# 的整文件 SHA-256 作黑名单：
+#   下载侧 _atomic_write_cover 命中即不落盘；缓存侧 _cover_file_ok /
+#   _check_and_clean_corrupted 命中即判无效并允许删除，由既有补下链路重拉。
+# 删除严格限定为哈希精确命中的文件。签名在模块加载时从 coverdir 计算并进程内
+# 缓存（替换占位文件后调 refresh_placeholder_signatures() 重算）；签名文件不存
+# 在则跳过对应签名，全部缺失时黑名单为空，判定行为与改动前完全一致（零误伤）。
+_PLACEHOLDER_SOURCES: Tuple[str, ...] = ('0.png', '11000.png')
+_PLACEHOLDER_SIGNATURES: frozenset = frozenset()
+
+
+def _compute_placeholder_signatures() -> frozenset:
+    """从占位资源文件计算整文件 SHA-256 签名集合；缺失/读取失败逐个跳过。"""
+    hashes = set()
+    for name in _PLACEHOLDER_SOURCES:
+        try:
+            src = coverdir / name
+            if src.is_file():
+                hashes.add(hashlib.sha256(src.read_bytes()).hexdigest())
+        except OSError:
+            pass
+    return frozenset(hashes)
+
+
+def refresh_placeholder_signatures() -> None:
+    """按当前 coverdir 重算并缓存签名（进程内黑名单的唯一写入点）。"""
+    global _PLACEHOLDER_SIGNATURES
+    _PLACEHOLDER_SIGNATURES = _compute_placeholder_signatures()
+
+
+def is_placeholder_bytes(data: bytes) -> bool:
+    """字节流是否精确命中占位图黑名单（整文件 SHA-256，不做模糊匹配）。"""
+    if not data or not _PLACEHOLDER_SIGNATURES:
+        return False
+    return hashlib.sha256(data).hexdigest() in _PLACEHOLDER_SIGNATURES
+
+
+def is_placeholder_cover_file(path: Path, data: Optional[bytes] = None) -> bool:
+    """本地曲绘是否为已落盘的占位图。
+
+    签名来源文件本身（0.png / 11000.png）除外：它们是 ``music_picture`` 故意
+    回退的兜底占位图，删掉会打断回退链、并把黑名单的签名来源清空。
+    """
+    if path.name in _PLACEHOLDER_SOURCES:
+        return False
+    if data is None:
+        try:
+            data = path.read_bytes()
+        except OSError:
+            return False
+    return is_placeholder_bytes(data)
+
+
+refresh_placeholder_signatures()
 
 
 def forget_corrupted_cover(song_id: Union[int, str]) -> None:
@@ -32,16 +94,28 @@ def _check_and_clean_corrupted(path: Path) -> bool:
         return False
     sid = path.stem  # 文件名（不含扩展名）
     # 先按内容判断：文件可能已被重新下载修复，命中过黑名单不代表它现在还是坏的
+    stat_at_read = None
     try:
-        if is_valid_image(path.read_bytes()[:16]):
-            forget_corrupted_cover(sid)
-            return True
+        stat_at_read = path.stat()
+        data = path.read_bytes()
     except OSError:
-        pass
+        data = b''
+    # is_placeholder_cover_file 走 globals() 软解析：按函数名抽取本定义的测试
+    # 命名空间里没有黑名单设施时退回「仅魔数」的旧行为，不抛 NameError。
+    placeholder_hit = globals().get("is_placeholder_cover_file")
+    if is_valid_image(data[:16]) and not (placeholder_hit and placeholder_hit(path, data)):
+        forget_corrupted_cover(sid)
+        return True
     if sid not in _corrupted_cover_ids:
-        log.warning(f"曲绘 {path.name} 已损坏（魔数不正确），自动删除并降级")
+        log.warning(f"曲绘 {path.name} 已损坏或为占位图（魔数/签名黑名单校验失败），自动删除并降级")
     _corrupted_cover_ids.add(sid)
     try:
+        # TOCTOU 收窄：mtime/size 与读字节时不一致说明文件在读检之间被其他
+        # 进程改写或删除（可能刚重新下好有效曲绘），本次跳过删除，下轮再处理。
+        if stat_at_read is not None:
+            now = path.stat()
+            if (now.st_mtime_ns, now.st_size) != (stat_at_read.st_mtime_ns, stat_at_read.st_size):
+                return False
         path.unlink(missing_ok=True)
     except OSError:
         pass
@@ -178,7 +252,8 @@ def music_picture(music_id: Union[int, str]) -> Path:
     4. 若 10000 < music_id < 100000（可能是水鱼DX），尝试 {music_id - 10000}.png（落雪SD）
     5. 回退到默认占位图 0.png → 11000.png
     
-    损坏自动修复: 每次访问都会用魔数校验文件有效性，损坏文件自动删除并继续查找。
+    损坏自动修复: 每次访问都会用魔数 + 占位图签名黑名单校验文件有效性，
+    损坏或占位图文件自动删除并继续查找（占位图被删后由补下链路重新拉取）。
     """
     music_id = int(music_id)
     

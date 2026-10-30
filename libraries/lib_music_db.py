@@ -139,16 +139,23 @@ def _is_banquet_id(song_id: int) -> bool:
 
 
 def _cover_file_ok(path: Path) -> bool:
-    """本地曲绘是否可直接使用（文件存在 + 魔数有效）。"""
-    from .image import is_valid_image
+    """本地曲绘是否可直接使用（文件存在 + 魔数有效 + 未命中占位图签名黑名单）。
+
+    占位图（滚木/蓝 maimai logo）是合法 PNG，魔数分辨不出来；命中黑名单即判
+    无效，让逐键补缺 / ensure_covers 重新拉取。整文件哈希精确匹配，真封面判定
+    与改动前完全一致。
+    """
+    from .image import is_placeholder_cover_file, is_valid_image
 
     try:
         if not path.is_file():
             return False
         with open(path, 'rb') as f:
-            return is_valid_image(f.read(16))
+            if not is_valid_image(f.read(16)):
+                return False
     except OSError:
         return False
+    return not is_placeholder_cover_file(path)
 
 
 def _atomic_write_cover(path: Path, data: bytes) -> bool:
@@ -159,8 +166,16 @@ def _atomic_write_cover(path: Path, data: bytes) -> bool:
     文件，校验通过才原子替换——最终路径要么是旧的完整文件，要么是新的完整
     文件；任何失败都清掉临时文件。
 
-    Returns: True=已写入有效文件, False=内容无效或落盘失败
+    Returns: True=已写入有效文件, False=内容无效（含占位图）或落盘失败
     """
+    from .image import is_placeholder_bytes
+
+    if is_placeholder_bytes(data):
+        # 上游对新曲未解禁返回占位图：不落盘、不标记完成，走既有失败路径，
+        # 下次逐键补缺 / ensure_covers 会重新拉取（解禁后即恢复正常）。
+        log.warning(f"曲绘 {path.name} 内容是占位图（签名黑名单命中），不落盘，等待解禁重下")
+        return False
+
     tmp_path: Optional[Path] = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -208,10 +223,11 @@ def _download_one_cover(
     url = f"https://assets2.lxns.net/maimai/jacket/{download_id}.png"
 
     # 已有有效文件则跳过（force 时必须绕过：否则修正命令永远下不了新图）
+    # 用 _cover_file_ok 而非裸魔数：已缓存的占位图不能被当成「已完成」
     if not force and cover_path.exists() and cover_path.stat().st_size > 5000:
-        from .image import is_valid_image, forget_corrupted_cover
+        from .image import forget_corrupted_cover
         try:
-            if is_valid_image(cover_path.read_bytes()[:16]):
+            if _cover_file_ok(cover_path):
                 forget_corrupted_cover(save_id)
                 return True
         except Exception:
@@ -486,10 +502,11 @@ def _download_one_cover_fish(
     cover_path = cover_dir / f'{save_id}.png'
     
     # 已有有效文件则跳过（force 时必须绕过：脏图魔数合法，只能靠重下覆盖）
+    # 用 _cover_file_ok 而非裸魔数：已缓存的占位图不能被当成「已完成」
     if not force and cover_path.exists() and cover_path.stat().st_size > 5000:
-        from .image import is_valid_image, forget_corrupted_cover
+        from .image import forget_corrupted_cover
         try:
-            if is_valid_image(cover_path.read_bytes()[:16]):
+            if _cover_file_ok(cover_path):
                 forget_corrupted_cover(save_id)
                 return True
         except Exception:

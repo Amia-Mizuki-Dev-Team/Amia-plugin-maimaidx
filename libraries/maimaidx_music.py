@@ -402,7 +402,7 @@ class MaiMusic:
             # 降级：从 total_list 逐一下载（使用水鱼 API）
             log.warning("musicDB.json 不存在，降级使用水鱼 API 下载曲绘")
             from ..libraries.image import is_valid_image, _corrupted_cover_ids
-            from .lib_music_db import _download_one_cover_fish
+            from .lib_music_db import _download_one_cover_fish, _cover_file_ok
             import shutil
             processed = 0
             # 先构建 原始ID → [原始ID] 映射（下载器内部再做归一化）
@@ -421,7 +421,9 @@ class MaiMusic:
                 if _download_one_cover_fish(download_id, tmp_save, coverdir):
                     for oid in original_ids:
                         dst = coverdir / f'{oid}.png'
-                        if not dst.exists() or dst.stat().st_size < 5000:
+                        # 体积过阈值 ≠ 健康：占位图也是合法 PNG 且 >5KB，必须过
+                        # _cover_file_ok（魔数 + 占位签名黑名单）才允许跳过重下。
+                        if not dst.exists() or dst.stat().st_size < 5000 or not _cover_file_ok(dst):
                             shutil.copy2(tmp_path, dst)
                     processed += 1
                 tmp_path.unlink(missing_ok=True)
