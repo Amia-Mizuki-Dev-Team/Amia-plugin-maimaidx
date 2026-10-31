@@ -1,5 +1,19 @@
 # Changelog
 
+## [2026-10-31] - 曲绘统一走落雪 %10000 / 删除错误迁移 / 404 负缓存
+
+### Fixed
+
+- **宴会场曲绘不再刷 404**（`libraries/lib_music_db.py`）：移除「≥100000 排除落雪、直连水鱼」分支，全 id 统一 `sid % 10000` 走落雪 `jacket/{did}.png`（宴会场落到父曲曲绘，实测 41/41 均 200）；水鱼仅作最后兜底，`fish_cover_id` 同步归一化。
+- **删除「%10000 污染」迁移**：正确的父曲曲绘不再被当脏数据删除重下（此前导致「缺→补→又缺」循环）。
+- **404 负缓存持久化**：双源均 404 的 id 记入 `config.static/common/cover_negative_cache.json`（TTL 7 天、临时文件+`os.replace` 原子写、失败 WARNING），不再每轮重试；落雪/水鱼 404 日志降 DEBUG，每轮一行汇总。
+- **整万位 id 守卫**（`_cover_download_id`）：`10000/100000` 等归一化为 0 的 id 不再请求 `jacket/0.png`（占位 logo），按 not_found 处理并入负缓存。
+- 注释同步：`libraries/maimaidx_music.py` 降级路径、`__init__.py` marker 说明（marker 只写不读、不再短路补缺）。
+
+### Tests
+
+- `tests/test_cover_selfheal.py`：按错误前提写的断言改为新语义，新增 6 例（宴会 id→父曲 URL、负缓存命中/过期/原子写、旧 marker 不删图、双源 404 入缓存）。
+
 ## [2026-10-31] - 定数 0.0 修复 / 曲库持久化 / 更新别名库单回执
 
 ### Fixed

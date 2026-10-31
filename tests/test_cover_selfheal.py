@@ -7,18 +7,22 @@
    曲目键为准逐键校验。
 2. ``_corrupted_cover_ids`` 不能永久拉黑：重新下载/校验到有效文件后必须解除，
    否则有效曲绘会在下次读取时被无条件删除。
-3. 水鱼封面 URL 的 DX 区间是 ``10000 <= id < 100000``（旧实现只减 10001~11000，
-   DX id 11001..99999 全拼错），宴会场 ``>= 100000`` 保持原 ID，禁止 ``% 10000``。
+3. 水鱼封面 URL 的归一化是 ``>= 10000 一律 % 10000``（旧实现只减 10001~11000，
+   DX id 11001..99999 全拼错；宴会场也走同一规则，落到父曲那张图）。
 4. B50 绘制前按需补下**有界**（并发 ≤5 / 总超时 15s），读不到曲绘时用内存
    灰色占位兜底，整张图不能因为缺图失败。
-5. 宴会场（id >= 100000）补下只走水鱼精确 ``covers/{id}.png``：落雪 ``% 10000``
-   拿到的是另一首歌（110114 → jacket/114.png，还是 HTTP 200）。
-6. 缺图判定不能经过 ``music_picture`` 的回退：110114 会因 10114.png（另一首歌）
-   存在而被当成健康；普通 SD/DX 仍按 ``{id}``/``{id±10000}`` 回退集合判断。
+5. 宴会场（id >= 100000）与普通 id 走**同一条**落雪 ``% 10000`` 路径：宴会曲目
+   在上游没有专属封面，``% 10000`` 命中的就是父曲曲绘（实测 41/41 均 200，
+   100851 → jacket/851.png）；水鱼只在落雪失败时作最后兜底。
+6. 缺图判定不能经过 ``music_picture`` 的回退：110114 会因 10114.png 存在而被当成
+   健康；普通 SD/DX 仍按 ``{id}``/``{id±10000}`` 回退集合判断。
 7. 落盘必须是临时文件 + 魔数校验 + ``os.replace``：直接写在中断/并发时留下的
    半截 PNG 头 16 字节合法，会被后续校验永久当健康文件。
-8. 旧版 ``%10000`` 写脏的宴会场曲绘是**合法 PNG**（魔数救不了），靠 marker
-   版本迁移一次性清理；``force_redownload=True`` 必须绕过「已有有效文件」早退。
+8. marker 只作附带信息（``v2:<文件数>``），**不再**按「%10000 写脏」删宴会场
+   曲绘——那个前提是错的，会误删正确的父曲曲绘再重下 404；``force_redownload``
+   必须绕过「已有有效文件」与负缓存两处早退。
+9. 落雪 + 水鱼都 404 的 id 写持久化负缓存（TTL 7 天）：窗口内不再发请求，过期
+   自动重试；写入必须原子（半截 JSON 等于负缓存失效）。
 
 手法沿用 ``tests/test_b50_render.py``：``image.py`` / ``lib_music_db.py`` 的
 ``..config`` 依赖链在单测环境 import 不动，所以用别名包 + 配置替身加载生产
@@ -33,6 +37,7 @@ import ast
 import asyncio
 import importlib
 import io
+import json
 import sys
 import tempfile
 import time
@@ -110,6 +115,8 @@ def _load_modules():
     config.Path = Path
     config.log = _LogStub()
     config.coverdir = Path("__unset__")
+    # lib_music_db 在模块导入期就取 `..config.static`（负缓存落盘根目录）
+    config.static = Path("__unset_static__")
     config.SHANGGUMONO = ""
     sys.modules[f"{_PKG}.config"] = config
     image = importlib.import_module(f"{_PKG}.libraries.image")
@@ -129,7 +136,18 @@ class _CoverDirMixin:
         patcher = mock.patch.object(self.image_mod, "coverdir", self.coverdir)
         patcher.start()
         self.addCleanup(patcher.stop)
+        # 负缓存是持久化文件：测试一律指向临时目录，绝不写进插件的 static/
+        lib = getattr(self, "lib", None)
+        if lib is not None:
+            cache_patcher = mock.patch.object(
+                lib, "_cover_negative_cache_path", self._negative_cache_path
+            )
+            cache_patcher.start()
+            self.addCleanup(cache_patcher.stop)
         self.image_mod._corrupted_cover_ids.clear()
+
+    def _negative_cache_path(self) -> Path:
+        return self.coverdir / "cover_negative_cache.json"
 
     def write_cover(self, name: str, color=(10, 20, 30)) -> Path:
         path = self.coverdir / name
@@ -162,7 +180,7 @@ class CoverSyncMarkerTest(_CoverDirMixin, unittest.TestCase):
 
         calls = []
 
-        def fake_download(download_id, save_id, cover_dir, headers, force=False):
+        def fake_download(download_id, save_id, cover_dir, headers, force=False, status=None):
             calls.append((download_id, save_id))
             (Path(cover_dir) / f"{save_id}.png").write_bytes(_png_bytes())
             return True
@@ -197,12 +215,16 @@ class CoverSyncMarkerTest(_CoverDirMixin, unittest.TestCase):
         self._set_music_db([1817])
         self.write_cover("0.png")
 
-        def fake_download(download_id, save_id, cover_dir, headers, force=False):
+        def fake_download(download_id, save_id, cover_dir, headers, force=False, status=None):
             # 200 但是反爬 HTML：不能当曲绘复制给曲目键
             (Path(cover_dir) / f"{save_id}.png").write_bytes(b"<html>blocked</html>")
             return True
 
-        with mock.patch.object(self.lib, "_download_one_cover", fake_download):
+        def fake_fish(*args, **kwargs):
+            return False  # 落雪内容不可用 → 水鱼兜底也失败（不该落空文件）
+
+        with mock.patch.object(self.lib, "_download_one_cover", fake_download), \
+                mock.patch.object(self.lib, "_download_one_cover_fish", fake_fish):
             added = asyncio.run(self.lib.download_all_covers(self.coverdir))
 
         self.assertEqual(added, 0)
@@ -246,7 +268,7 @@ class CorruptedCoverBlacklistTest(_CoverDirMixin, unittest.TestCase):
 
 
 class FishCoverUrlTest(unittest.TestCase):
-    """缺陷 3：水鱼曲绘 URL 的 DX 区间必须是 10000..99999。"""
+    """缺陷 3：水鱼曲绘 URL 归一化必须是「>= 10000 一律 % 10000」。"""
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -262,15 +284,142 @@ class FishCoverUrlTest(unittest.TestCase):
         # 旧实现只处理 10001..11000，11817 会拼成不存在的 11817.png
         self.assertEqual(self.lib.get_fish_cover_url(11817).rsplit("/", 1)[-1], "01817.png")
 
-    def test_banquet_id_keeps_raw_id(self) -> None:
-        self.assertEqual(self.lib.get_fish_cover_url(100008).rsplit("/", 1)[-1], "100008.png")
-        self.assertEqual(self.lib.get_fish_cover_url(110114).rsplit("/", 1)[-1], "110114.png")
+    def test_banquet_id_falls_back_to_parent_cover(self) -> None:
+        # 宴会 id 在上游没有专属封面：00121.png / 00851.png 就是父曲那张图，
+        # 保持 6 位原 ID 只会拼出必然 404 的地址（修复前的水鱼兜底就是这样）。
+        self.assertEqual(self.lib.get_fish_cover_url(110121).rsplit("/", 1)[-1], "00121.png")
+        self.assertEqual(self.lib.get_fish_cover_url(100851).rsplit("/", 1)[-1], "00851.png")
 
-    def test_banquet_never_uses_modulo(self) -> None:
-        # % 10000 会把不同宴会场曲目压到同一张图上
-        self.assertNotEqual(
-            self.lib.fish_cover_id(110114), self.lib.fish_cover_id(100114)
+    def test_banquet_and_parent_share_fish_cover(self) -> None:
+        # 同一父曲的宴会 id 必须指向同一张图——这是修复点，不是缺陷
+        self.assertEqual(self.lib.fish_cover_id(110121), self.lib.fish_cover_id(121))
+        self.assertEqual(self.lib.fish_cover_id(100851), 851)
+
+
+class CoverNegativeCacheTest(_CoverDirMixin, unittest.TestCase):
+    """缺陷 8/9：宴会 id 统一走落雪 %10000；双源 404 记负缓存（TTL 7 天）。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.image_mod, cls.lib = _load_modules()
+
+    def tearDown(self) -> None:
+        self.lib.music_db_cache._cache = {}
+        self.lib.music_db_cache._loaded = False
+
+    def _set_music_db(self, ids) -> None:
+        cache = self.lib.music_db_cache
+        cache._cache = {str(i): {"name": f"song-{i}", "version": 20000} for i in ids}
+        cache._loaded = True
+
+    def _cache_file(self) -> Path:
+        return self.coverdir / "cover_negative_cache.json"
+
+    # ---- ① 宴会 id 100851 解析出落雪 jacket/851.png ----
+    def test_banquet_id_resolves_to_parent_lxns_url(self) -> None:
+        self._set_music_db([100851])
+        urls: List[str] = []
+
+        def fake_get(url, *args, **kwargs):
+            urls.append(url)
+            return _FakeResponse(_png_bytes((3, 4, 5)))
+
+        with mock.patch.object(self.lib, "cffi_requests", SimpleNamespace(get=fake_get)):
+            added = asyncio.run(self.lib.download_all_covers(self.coverdir))
+
+        self.assertEqual(added, 1)
+        self.assertEqual(urls, ["https://assets2.lxns.net/maimai/jacket/851.png"])
+        self.assertTrue((self.coverdir / "100851.png").is_file())
+        self.assertFalse((self.coverdir / "851.png").exists())  # 只按原始键名落盘
+
+    # ---- ② 负缓存命中时不再发起请求 ----
+    def test_fresh_negative_cache_suppresses_requests(self) -> None:
+        self._set_music_db([100851])
+        self._cache_file().write_text(
+            json.dumps({"100851": time.time()}), encoding="utf-8"
         )
+
+        def boom(*args, **kwargs):  # pragma: no cover - 命中即不该被调用
+            raise AssertionError("负缓存命中时不应发请求")
+
+        with mock.patch.object(self.lib, "_download_one_cover", boom), \
+                mock.patch.object(self.lib, "_download_one_cover_fish", boom):
+            added = asyncio.run(self.lib.download_all_covers(self.coverdir))
+
+        self.assertEqual(added, 0)
+        self.assertFalse((self.coverdir / "100851.png").exists())
+
+    def test_ensure_covers_skips_negative_cached_id(self) -> None:
+        # B50 出图前的按需补下同样受负缓存约束（连 downloader 都不应被调用）
+        self._cache_file().write_text(
+            json.dumps({"100851": time.time()}), encoding="utf-8"
+        )
+        called: List[int] = []
+
+        async def downloader(sid: int) -> bool:
+            called.append(sid)
+            return True
+
+        count = asyncio.run(
+            self.lib.ensure_covers([100851], self.coverdir, timeout=1, downloader=downloader)
+        )
+        self.assertEqual(count, 0)
+        self.assertEqual(called, [])
+
+    # ---- ③ 过期条目会重试 ----
+    def test_expired_negative_entry_is_retried(self) -> None:
+        self._set_music_db([100851])
+        stale = time.time() - (8 * 24 * 60 * 60)  # 超过 7 天 TTL
+        self._cache_file().write_text(
+            json.dumps({"100851": stale}), encoding="utf-8"
+        )
+        calls: List[int] = []
+
+        def fake_lxns(download_id, save_id, cover_dir, headers, force=False, status=None):
+            calls.append(int(download_id))
+            (Path(cover_dir) / f"{save_id}.png").write_bytes(_png_bytes())
+            return True
+
+        with mock.patch.object(self.lib, "_download_one_cover", fake_lxns):
+            added = asyncio.run(self.lib.download_all_covers(self.coverdir))
+
+        self.assertEqual(calls, [851], "过期条目必须重试")
+        self.assertEqual(added, 1)
+
+    # ---- 双源 404 → 写负缓存（顺带清掉过期条目） ----
+    def test_both_sources_404_writes_negative_cache(self) -> None:
+        self._set_music_db([100851])
+        stale = time.time() - (8 * 24 * 60 * 60)
+        self._cache_file().write_text(
+            json.dumps({"123456": stale}), encoding="utf-8"
+        )
+
+        class _NotFound:
+            status_code = 404
+            content = b""
+
+            @staticmethod
+            def raise_for_status() -> None:
+                raise RuntimeError("404 Client Error")
+
+        fake = SimpleNamespace(get=lambda *a, **k: _NotFound())
+        with mock.patch.object(self.lib, "cffi_requests", fake):
+            added = asyncio.run(self.lib.download_all_covers(self.coverdir))
+
+        self.assertEqual(added, 0)
+        data = json.loads(self._cache_file().read_text(encoding="utf-8"))
+        self.assertIn("100851", data)
+        self.assertIsInstance(data["100851"], float)
+        self.assertNotIn("123456", data, "过期条目在写回时应被清掉")
+
+    # ---- 落盘原子性：半截 JSON 等于负缓存失效 ----
+    def test_negative_cache_write_is_atomic(self) -> None:
+        target = self._cache_file()
+        with mock.patch("os.replace", side_effect=OSError("disk full")):
+            self.lib._save_negative_cache({"100851": time.time()}, target)
+
+        self.assertFalse(target.exists())
+        self.assertEqual(list(self.coverdir.iterdir()), [])
 
 
 class _CoverPrefetchBoundTest(_CoverDirMixin, unittest.TestCase):
@@ -443,7 +592,7 @@ class CoverRenderPlaceholderTest(unittest.TestCase):
 
 
 class DegradedFishFallbackTest(_CoverDirMixin, unittest.TestCase):
-    """缺陷 3（降级路径）：musicDB.json 缺失时，宴会场 id 不能被 % 10000 压扁。"""
+    """缺陷 3（降级路径）：按**原始 id** 分键下载/落盘，各曲目互不覆盖。"""
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -468,7 +617,7 @@ class DegradedFishFallbackTest(_CoverDirMixin, unittest.TestCase):
         super().setUp()
         self.mod.coverdir = self.coverdir
 
-    def test_banquet_id_is_not_reduced_modulo_10000(self) -> None:
+    def test_degraded_path_keys_by_raw_id_without_overwrite(self) -> None:
         calls: List[int] = []
 
         def fake_fish(download_id, save_id, cover_dir, force=False):
@@ -504,63 +653,62 @@ class BanquetCoverPrecisionTest(_CoverDirMixin, unittest.TestCase):
         cache._cache = {str(i): {"name": f"song-{i}", "version": 20000} for i in ids}
         cache._loaded = True
 
-    # ---- 按需补下：宴会场不请求落雪 jacket/114.png ----
-    def test_ensure_covers_banquet_skips_lxns(self) -> None:
+    # ---- 按需补下：宴会 id 同样走落雪 %10000（父曲曲绘），不再必然 404 ----
+    def test_ensure_covers_banquet_uses_parent_cover(self) -> None:
         lxns_calls: List[Any] = []
         fish_calls: List[Any] = []
 
         def fake_lxns(*args, **kwargs):
-            # 被调用即等于「把 110114 下成 jacket/114.png（另一首歌）」
-            lxns_calls.append(args)
+            lxns_calls.append((int(args[0]), args[1]))
+            (Path(args[2]) / f"{args[1]}.png").write_bytes(_png_bytes())
             return True
 
-        def fake_fish(download_id, save_id, cover_dir, force=False):
-            fish_calls.append((int(download_id), save_id))
-            (Path(cover_dir) / f"{save_id}.png").write_bytes(_png_bytes())
-            return True
+        def fake_fish(*args, **kwargs):  # pragma: no cover - 落雪成功就不该兜底
+            fish_calls.append(args)
+            return False
 
         async def scenario():
             with mock.patch.object(self.lib, "_download_one_cover", fake_lxns), \
                     mock.patch.object(self.lib, "_download_one_cover_fish", fake_fish):
-                return await self.lib.ensure_covers([110114], self.coverdir, timeout=5)
+                return await self.lib.ensure_covers([100851], self.coverdir, timeout=5)
 
         count = asyncio.run(scenario())
         self.assertEqual(count, 1)
-        self.assertEqual(lxns_calls, [])
-        self.assertEqual(fish_calls, [(110114, "110114")])
-        self.assertTrue((self.coverdir / "110114.png").is_file())
-        self.assertFalse((self.coverdir / "114.png").exists())
+        # 100851 % 10000 = 851 → 落雪 jacket/851.png（实测 200，父曲曲绘）
+        self.assertEqual(lxns_calls, [(851, "100851")])
+        self.assertEqual(fish_calls, [])
+        self.assertTrue((self.coverdir / "100851.png").is_file())
+        self.assertFalse((self.coverdir / "851.png").exists())
 
-    # ---- 全量补缺：宴会场走水鱼精确 id，不压成 %10000 ----
-    def test_download_all_covers_banquet_uses_fish_exact(self) -> None:
-        self._set_music_db([110114, 100114])
+    # ---- 全量补缺：每个宴会 id 取自己的父曲图，按原始键名落盘 ----
+    def test_download_all_covers_banquet_uses_parent_covers(self) -> None:
+        self._set_music_db([110121, 100851])
+        png_121 = _png_bytes((121, 0, 0))
+        png_851 = _png_bytes((0, 123, 0))
         lxns_calls: List[Any] = []
-        fish_calls: List[Any] = []
 
-        def fake_lxns(*args, **kwargs):
-            lxns_calls.append(args)
+        def fake_lxns(download_id, save_id, cover_dir, headers, force=False, status=None):
+            lxns_calls.append((int(download_id), save_id))
+            payload = png_121 if int(download_id) == 121 else png_851
+            (Path(cover_dir) / f"{save_id}.png").write_bytes(payload)
             return True
 
-        def fake_fish(download_id, save_id, cover_dir, force=False):
-            fish_calls.append((int(download_id), save_id))
-            # 内容写 ID：两张宴会曲绘不能互相覆盖
-            (Path(cover_dir) / f"{save_id}.png").write_bytes(str(download_id).encode())
-            return True
+        def fake_fish(*args, **kwargs):  # pragma: no cover
+            raise AssertionError("落雪成功时不应再走水鱼")
 
         with mock.patch.object(self.lib, "_download_one_cover", fake_lxns), \
                 mock.patch.object(self.lib, "_download_one_cover_fish", fake_fish):
             added = asyncio.run(self.lib.download_all_covers(self.coverdir))
 
         self.assertEqual(added, 2)
-        self.assertEqual(lxns_calls, [])
-        self.assertEqual(fish_calls, [(110114, "110114"), (100114, "100114")])
-        self.assertEqual((self.coverdir / "110114.png").read_bytes(), b"110114")
-        self.assertEqual((self.coverdir / "100114.png").read_bytes(), b"100114")
-        self.assertFalse((self.coverdir / "114.png").exists())
+        self.assertEqual(lxns_calls, [(121, "__tmp_121"), (851, "__tmp_851")])
+        self.assertEqual((self.coverdir / "110121.png").read_bytes(), png_121)
+        self.assertEqual((self.coverdir / "100851.png").read_bytes(), png_851)
+        self.assertFalse((self.coverdir / "121.png").exists())  # 只按原始键名落盘
 
     # ---- 缺图判定：不吃 music_picture 的回退结果 ----
     def test_needs_download_banquet_ignores_alias_file(self) -> None:
-        self.write_cover("10114.png")  # 110114 缺失时 music_picture 的回退目标
+        self.write_cover("10114.png")  # music_picture 对 110114 的回退目标
         self.assertEqual(self.image_mod.music_picture(110114), self.coverdir / "10114.png")
         self.assertTrue(self.lib._cover_needs_download(110114))
 
@@ -575,25 +723,21 @@ class BanquetCoverPrecisionTest(_CoverDirMixin, unittest.TestCase):
         self.assertTrue(self.lib._cover_needs_download(1817))
 
     def test_download_all_covers_refills_banquet_despite_alias(self) -> None:
-        # 10114.png（另一首歌）存在时，110114.png 缺失仍必须补齐
+        # 10114.png 让 music_picture 有图可回退，但 110114.png 仍缺 → 补自己的键
         self._set_music_db([110114])
         self.write_cover("10114.png")
-        fish_calls: List[Any] = []
+        lxns_calls: List[int] = []
 
-        def fake_fish(download_id, save_id, cover_dir, force=False):
-            fish_calls.append(int(download_id))
-            (Path(cover_dir) / f"{save_id}.png").write_bytes(_png_bytes())
+        def fake_lxns(download_id, save_id, cover_dir, headers, force=False, status=None):
+            lxns_calls.append(int(download_id))
+            (Path(cover_dir) / f"{save_id}.png").write_bytes(_png_bytes((9, 9, 9)))
             return True
 
-        def fake_lxns(*args, **kwargs):
-            raise AssertionError("宴会场不应走落雪 %10000 路径")
-
-        with mock.patch.object(self.lib, "_download_one_cover", fake_lxns), \
-                mock.patch.object(self.lib, "_download_one_cover_fish", fake_fish):
+        with mock.patch.object(self.lib, "_download_one_cover", fake_lxns):
             added = asyncio.run(self.lib.download_all_covers(self.coverdir))
 
         self.assertEqual(added, 1)
-        self.assertEqual(fish_calls, [110114])
+        self.assertEqual(lxns_calls, [114])  # jacket/114.png = 110114 的父曲曲绘
         self.assertTrue((self.coverdir / "110114.png").is_file())
 
     # ---- 落盘原子性 ----
@@ -632,8 +776,8 @@ class BanquetCoverPrecisionTest(_CoverDirMixin, unittest.TestCase):
         self.assertEqual(leftovers, [])
 
 
-class CoverMarkerMigrationTest(_CoverDirMixin, unittest.TestCase):
-    """复审 Major：旧版 ``%10000`` 写脏的宴会场曲绘是合法 PNG，只能靠 marker 版本迁移。"""
+class CoverMarkerNoPurgeTest(_CoverDirMixin, unittest.TestCase):
+    """复审回归：marker 不是迁移判据，旧的「%10000 写脏」清理必须彻底移除。"""
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -648,33 +792,28 @@ class CoverMarkerMigrationTest(_CoverDirMixin, unittest.TestCase):
         cache._cache = {str(i): {"name": f"song-{i}", "version": 20000} for i in ids}
         cache._loaded = True
 
-    def test_stale_marker_purges_dirty_banquet_cover(self) -> None:
-        self._set_music_db([8, 110114])
+    def test_stale_marker_keeps_parent_cover(self) -> None:
+        # 旧版把 110121.png 当「%10000 写脏」删掉，再按 6 位 id 重下 404。
+        # 它就是 jacket/121.png 的合法副本 —— 必须原地保留，且一个请求都不发。
+        self._set_music_db([8, 110121])
         self.write_cover("8.png")
-        dirty = self.write_cover("110114.png", (200, 0, 0))  # 实为 jacket/114.png
+        kept = self.write_cover("110121.png", (200, 0, 0))
+        before = kept.read_bytes()
         (self.coverdir / ".cover_sync_done").write_text("1328")  # 旧格式 marker
 
-        clean = _png_bytes((0, 200, 0))
-        fish_calls: List[Any] = []
+        def boom(*args, **kwargs):  # pragma: no cover - 曲绘齐全就不该下载
+            raise AssertionError("已有有效曲绘时不应重下（更不能先删）")
 
-        def fake_fish(download_id, save_id, cover_dir, force=False):
-            fish_calls.append(int(download_id))
-            (Path(cover_dir) / f"{save_id}.png").write_bytes(clean)
-            return True
-
-        def fake_lxns(*args, **kwargs):
-            raise AssertionError("宴会场不应走落雪 %10000 路径")
-
-        with mock.patch.object(self.lib, "_download_one_cover", fake_lxns), \
-                mock.patch.object(self.lib, "_download_one_cover_fish", fake_fish):
+        with mock.patch.object(self.lib, "_download_one_cover", boom), \
+                mock.patch.object(self.lib, "_download_one_cover_fish", boom):
             added = asyncio.run(self.lib.download_all_covers(self.coverdir))
 
-        self.assertEqual(added, 1)
-        self.assertEqual(fish_calls, [110114])
-        # 脏图（合法 PNG）被删除后按精确 id 重下
-        self.assertEqual(dirty.read_bytes(), clean)
-        self.assertTrue((self.coverdir / "8.png").exists())  # 普通曲绘不受迁移影响
-        self.assertTrue((self.coverdir / ".cover_sync_done").read_text().startswith("v2:"))
+        self.assertEqual(added, 0)
+        self.assertTrue(kept.is_file())
+        self.assertEqual(kept.read_bytes(), before)  # 没被删、也没被重写
+        self.assertTrue((self.coverdir / "8.png").exists())
+        # marker 照常升级成 v2（只是附带信息，不代表清过文件）
+        self.assertEqual((self.coverdir / ".cover_sync_done").read_text(), "v2:2")
 
     def test_current_marker_keeps_banquet_cover(self) -> None:
         self._set_music_db([110114])
@@ -693,11 +832,12 @@ class CoverMarkerMigrationTest(_CoverDirMixin, unittest.TestCase):
     def test_temp_file_removed_when_download_fails(self) -> None:
         self._set_music_db([1817])
 
-        def fake_dl(download_id, save_id, cover_dir, headers, force=False):
+        def fake_dl(download_id, save_id, cover_dir, headers, force=False, status=None):
             (Path(cover_dir) / f"{save_id}.png").write_bytes(b"<html>blocked</html>")
             return False
 
-        with mock.patch.object(self.lib, "_download_one_cover", fake_dl):
+        with mock.patch.object(self.lib, "_download_one_cover", fake_dl), \
+                mock.patch.object(self.lib, "_download_one_cover_fish", lambda *a, **k: False):
             added = asyncio.run(self.lib.download_all_covers(self.coverdir))
 
         self.assertEqual(added, 0)
@@ -706,7 +846,7 @@ class CoverMarkerMigrationTest(_CoverDirMixin, unittest.TestCase):
     def test_temp_file_removed_when_write_raises(self) -> None:
         self._set_music_db([1817])
 
-        def fake_dl(download_id, save_id, cover_dir, headers, force=False):
+        def fake_dl(download_id, save_id, cover_dir, headers, force=False, status=None):
             (Path(cover_dir) / f"{save_id}.png").write_bytes(_png_bytes())
             return True
 
@@ -775,22 +915,24 @@ class ForceRedownloadTest(_CoverDirMixin, unittest.TestCase):
         self.assertEqual(path.read_bytes(), new)
 
     def test_download_all_covers_forwards_force(self) -> None:
-        self._set_music_db([110114])
-        self.write_cover("110114.png")
+        self._set_music_db([110121])
+        self.write_cover("110121.png")
         (self.coverdir / ".cover_sync_done").write_text("v2:1")
-        fish_calls: List[Any] = []
+        lxns_calls: List[Any] = []
 
-        def fake_fish(download_id, save_id, cover_dir, force=False):
-            fish_calls.append((int(download_id), bool(force)))
+        def fake_lxns(download_id, save_id, cover_dir, headers, force=False, status=None):
+            lxns_calls.append((int(download_id), bool(force)))
+            (Path(cover_dir) / f"{save_id}.png").write_bytes(_png_bytes())
             return True
 
-        with mock.patch.object(self.lib, "_download_one_cover_fish", fake_fish):
+        with mock.patch.object(self.lib, "_download_one_cover", fake_lxns):
             added = asyncio.run(
                 self.lib.download_all_covers(self.coverdir, force_redownload=True)
             )
 
         self.assertEqual(added, 1)
-        self.assertEqual(fish_calls, [(110114, True)])
+        # 强制重下走同一条落雪路径（110121 % 10000 = 121），force 必须透传
+        self.assertEqual(lxns_calls, [(121, True)])
 
 
 if __name__ == "__main__":

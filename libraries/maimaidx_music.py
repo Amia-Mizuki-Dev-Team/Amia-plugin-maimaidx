@@ -595,17 +595,23 @@ class MaiMusic:
             # 降级：从 total_list 逐一下载（使用水鱼 API）
             log.warning("musicDB.json 不存在，降级使用水鱼 API 下载曲绘")
             from ..libraries.image import is_valid_image, _corrupted_cover_ids
-            from .lib_music_db import _download_one_cover_fish, _cover_file_ok
+            from .lib_music_db import (
+                _download_one_cover_fish, _cover_file_ok, _cover_download_id,
+            )
             import shutil
             processed = 0
             # 先构建 原始ID → [原始ID] 映射（下载器内部再做归一化）
             id_map = {}
             for music in self.total_list:
                 raw_id = int(music.get('id', 0))
+                if _cover_download_id(raw_id) is None:
+                    # 0 / 整万位 id：归一化后是 0，上游没有 00000.png，跳过
+                    continue
                 sid = str(raw_id)
                 # 归一化交给 _download_one_cover_fish → fish_cover_id()：
-                # 10000..99999 减 10000、宴会场 >=100000 原样。这里必须传原始 ID，
-                # % 10000 会把不同宴会场曲目压到同一张图上。
+                # >= 10000 一律 % 10000（宴会场因此落到父曲那张曲绘，落雪实测
+                # 41/41 均 200）。这里必须传原始 ID：保存用的文件名要按原 id 写，
+                # 各曲目才不会挤到同一个键上。
                 id_map.setdefault(raw_id, []).append(sid)
             for download_id, original_ids in id_map.items():
                 # 跳过已知损坏的

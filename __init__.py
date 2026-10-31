@@ -119,7 +119,8 @@ async def get_music():
                     cleaned += 1
         if cleaned > 0:
             log.info(f'启动时清理 {cleaned} 张损坏曲绘，将在后续步骤重新下载')
-        # 基于 musicDB.json 补全缺失的曲绘（已有 .cover_sync_done 标记则跳过）
+        # 基于 musicDB.json 补全缺失的曲绘（marker 只作附带信息，不短路补缺：
+        # 曲库新增的键必须逐键校验后补下，否则 B50 会掉占位图）
         if maiconfig.lxnstoken:
             count = await download_all_covers(coverdir, maiconfig.lxnstoken, concurrency=5)
             if count > 0:

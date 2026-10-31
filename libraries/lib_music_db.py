@@ -5,12 +5,17 @@ import json
 import asyncio
 import os
 import tempfile
+import time
 import aiofiles
 import anyio
 from curl_cffi import requests as cffi_requests
 from typing import Awaitable, Callable, Iterable, Optional, Dict, Any, List, Union
 from pathlib import Path
 from loguru import logger as log
+
+# 运行时数据目录（`LXNS_B50_PATH` / `LXNSPATH` 可覆盖），与 image.py 同一取法：
+# 插件源码树只读，任何持久化都不能写回 ``libraries/../static``。
+from ..config import static
 
 # ==========================================
 # 版本常量表（与 config.py 的 plate_to_dx_version 保持一致的双备份）
@@ -124,9 +129,12 @@ music_db_cache = MusicDBCache()
 # 曲绘下载管理器（严格遵循 LX.py 方式：同步 + 单线程 + 无并发）
 # ==========================================
 
-# 宴会场曲目 ID 下界。这些歌在落雪资产里没有独立曲绘——``id % 10000`` 会命中
-# 另一首歌的图（110114 → jacket/114.png，HTTP 200），必须走水鱼精确
-# ``covers/{id}.png``。
+# 宴会场曲目 ID 下界。宴会场曲目**没有专属曲绘资产**：落雪对 6 位 id 直接 404，
+# ``id % 10000`` 命中的正是父曲曲绘（实测 41/41 全部 200：110121 → jacket/121.png，
+# 字节与该父曲一致；111069 → 1069.png 字节一致）。所以宴会 id 与普通 id 一样按
+# ``id % 10000`` 取图——那不是「另一首歌」，也不是脏数据。
+# 该下界判定仍然保留：``music_picture`` 对宴会 id 有 ``id - 100000`` 回退，判缺时
+# 必须只认 ``{id}.png``（见 ``_cover_candidates``）。
 _BANQUET_ID_BASE = 100000
 
 
@@ -136,6 +144,21 @@ def _is_banquet_id(song_id: int) -> bool:
         return int(song_id) >= _BANQUET_ID_BASE
     except (TypeError, ValueError):
         return False
+
+
+def _cover_download_id(song_id: Union[int, str]) -> Optional[int]:
+    """曲目 ID → 落雪/水鱼的图片 ID（``% 10000``）；整万位 id 返回 ``None``。
+
+    ``10000`` / ``100000`` 这类 id 的 ``% 10000 == 0``：上游没有 ``0.png``，拼出来
+    的 ``jacket/0.png`` 是那张占位 logo——状态 200 但会被占位黑名单拒收，于是
+    既下不成也进不了负缓存，每次启动都重试同一张不存在的图。归一化后不是
+    ``1..9999`` 的一律按「上游确实没有」处理：跳过请求、记负缓存。
+    """
+    try:
+        did = int(song_id) % 10000
+    except (TypeError, ValueError):
+        return None
+    return did if 0 < did < 10000 else None
 
 
 def _cover_file_ok(path: Path) -> bool:
@@ -204,8 +227,23 @@ def _atomic_write_cover(path: Path, data: bytes) -> bool:
                 pass
 
 
+def _set_status(status: Optional[List[str]], value: str) -> None:
+    """把下载结果类别追加给调用方（'ok' / 'not_found' / 'error'）。
+
+    只有 ``not_found``（上游确实 404）才允许写负缓存：网络抖动、反爬 200 HTML
+    都不是「上游没这张图」，写进去会让曲绘被压 7 天不重试。
+    """
+    if status is not None:
+        status.append(value)
+
+
 def _download_one_cover(
-    download_id: int, save_id: str, cover_dir: Path, headers: dict, force: bool = False
+    download_id: int,
+    save_id: str,
+    cover_dir: Path,
+    headers: dict,
+    force: bool = False,
+    status: Optional[List[str]] = None,
 ) -> bool:
     """
     下载单张曲绘并保存为原始 ID 文件名。
@@ -216,10 +254,17 @@ def _download_one_cover(
         cover_dir:   曲绘保存目录
         headers:     请求头
         force:       True 时跳过「已有有效文件」早退，强制重新下载
+        status:      可选，收集结果类别（见 ``_set_status``）
 
     Returns: True=成功, False=失败
     """
     cover_path = cover_dir / f'{save_id}.png'
+    # 整万位 id（10000 / 100000 …）归一化后是 0 → jacket/0.png 是占位 logo。
+    # 不发请求：上游确实没有这张图，直接按 not_found 记负缓存。
+    if _cover_download_id(download_id) is None:
+        _set_status(status, 'not_found')
+        log.debug(f"曲绘 {save_id}({download_id}) 归一化后为 0，上游无此资产")
+        return False
     url = f"https://assets2.lxns.net/maimai/jacket/{download_id}.png"
 
     # 已有有效文件则跳过（force 时必须绕过：否则修正命令永远下不了新图）
@@ -229,6 +274,7 @@ def _download_one_cover(
         try:
             if _cover_file_ok(cover_path):
                 forget_corrupted_cover(save_id)
+                _set_status(status, 'ok')
                 return True
         except Exception:
             pass
@@ -239,20 +285,30 @@ def _download_one_cover(
         try:
             resp = cffi_requests.get(url, headers=headers, impersonate="edge101")
         except Exception as e:
+            _set_status(status, 'error')
             log.warning(f"下载曲绘 {save_id}({download_id}) 失败: {e}")
             return False
 
     try:
         resp.raise_for_status()
     except Exception as e:
-        log.warning(f"下载曲绘 {save_id}({download_id}) 失败: {e}")
+        if getattr(resp, 'status_code', 0) in (404, 410):
+            # 上游确实没有这张图：降为 DEBUG，由调用方汇总一行 + 记负缓存
+            _set_status(status, 'not_found')
+            log.debug(f"曲绘 {save_id}({download_id}) 不存在: {e}")
+        else:
+            _set_status(status, 'error')
+            log.warning(f"下载曲绘 {save_id}({download_id}) 失败: {e}")
         return False
 
     if not _atomic_write_cover(cover_path, resp.content):
+        _set_status(status, 'error')
         return False
+
     # 下载成功即解除损坏记录：有效文件不能再被 image 层当坏文件删掉
     from .image import forget_corrupted_cover
     forget_corrupted_cover(save_id)
+    _set_status(status, 'ok')
     log.info(f"曲绘 {save_id}.png({download_id}) 下载成功")
     return True
 
@@ -273,58 +329,130 @@ _LXNS_HEADERS = {
 
 _COVER_SYNC_MARKER = '.cover_sync_done'
 
-# marker 版本：v1（旧）只有文件数；v2 起带前缀。旧版用 ``id % 10000`` 下载宴会
-# 场曲绘，写出的 110114.png 里其实是 jacket/114.png（另一首歌，合法 PNG），
-# 魔数校验分辨不出来——只能靠 marker 版本做一次性迁移。
+# marker 版本前缀：只表示「新格式」（``v2:<文件数>``），**不再是迁移判据**。
+# 旧版曾据此外加一次「%10000 写脏」的整批清理，前提是错的——宴会 id 的
+# ``%10000`` 命中的就是父曲曲绘（见 ``_BANQUET_ID_BASE`` 处说明），那样清理
+# 只会把正确的图删掉再重下 404，于是每次启动「缺 N → 补 → 又缺」循环。
 _COVER_MARKER_VERSION = 'v2'
 
 
 def _write_cover_marker(cover_dir: Path, count: int) -> None:
-    """记录同步元信息（`v2:<文件数>`；迁移判据，但不用于跳过补缺）。"""
+    """记录同步元信息（`v2:<文件数>`）。只作附带信息，不用于跳过补缺。"""
     try:
         (cover_dir / _COVER_SYNC_MARKER).write_text(f'{_COVER_MARKER_VERSION}:{count}')
     except OSError:
         pass
 
 
-def _read_cover_marker(cover_dir: Path) -> str:
-    try:
-        return (cover_dir / _COVER_SYNC_MARKER).read_text(encoding='utf-8').strip()
-    except (OSError, UnicodeDecodeError):
-        return ''
+# ==========================================
+# 曲绘 404 负缓存（持久化，TTL 7 天）
+# ==========================================
+
+# 落雪 + 水鱼都 404 的 id 就是上游确实没有独立资产。每次启动重试只是刷屏，
+# 记进负缓存后 7 天内不再发请求；过期自动重试，上游补图后能自愈。
+_COVER_NEGATIVE_CACHE_TTL = 7 * 24 * 60 * 60
+_COVER_NEGATIVE_CACHE_NAME = 'cover_negative_cache.json'
+
+# 结构：{"<song_id>": <unix_timestamp>}
 
 
-def _marker_is_current(marker: str) -> bool:
-    return marker.startswith(f'{_COVER_MARKER_VERSION}:')
+def _cover_negative_cache_path() -> Path:
+    """负缓存落盘位置：``<config.static>/common/cover_negative_cache.json``。
 
-
-def _purge_banquet_covers(cover_dir: Path) -> int:
-    """删除所有宴会场曲绘（id >= 100000），返回删除数量。
-
-    旧版本用 ``% 10000`` 下载宴会场曲绘，写出的文件内容是**另一首歌**的合法
-    PNG，只能整批清掉让逐键补缺按水鱼精确 id 重下。
+    与 ``music_alias.json`` 同级（运行时静态数据目录）。必须走 ``config.static``
+    ——它可被 ``LXNS_B50_PATH`` / ``LXNSPATH`` 覆盖；用 ``Path(__file__)`` 会
+    绕过去、在生产首次运行时于 git 工作区里新建未跟踪的 ``static/``，插件
+    目录只读时则落盘失败、7 天抑制静默失效。
     """
-    removed = 0
+    return static / 'common' / _COVER_NEGATIVE_CACHE_NAME
+
+
+def _negative_key(song_id: Union[int, str]) -> str:
+    """整数 id 统一成 ``"851"`` 这种形式（musicDB 的键本身就是字符串）。"""
     try:
-        entries = list(cover_dir.iterdir())
+        return str(int(song_id))
+    except (TypeError, ValueError):
+        return str(song_id)
+
+
+def _load_negative_cache(path: Optional[Path] = None) -> Dict[str, float]:
+    """读取负缓存，**顺带剔除过期条目**。读不到/解析失败一律当空表。"""
+    if path is None:
+        path = _cover_negative_cache_path()
+    try:
+        raw = json.loads(Path(path).read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    now = time.time()
+    cache: Dict[str, float] = {}
+    for key, stamp in raw.items():
+        try:
+            ts = float(stamp)
+        except (TypeError, ValueError):
+            continue
+        if now - ts < _COVER_NEGATIVE_CACHE_TTL:
+            cache[_negative_key(key)] = ts
+    return cache
+
+
+def _save_negative_cache(cache: Dict[str, float], path: Optional[Path] = None) -> None:
+    """临时文件 + fsync + ``os.replace`` 原子落盘。
+
+    直接覆盖写会在中断时留下半截 JSON，下一轮全量重试等于负缓存失效。
+    """
+    if path is None:
+        path = _cover_negative_cache_path()
+    path = Path(path)
+    tmp_path: Optional[Path] = None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(
+            prefix=f'.{path.name}.', suffix='.tmp', dir=str(path.parent)
+        )
+        tmp_path = Path(tmp_name)
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            json.dump(cache, f, ensure_ascii=False, sort_keys=True)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+        tmp_path = None  # 已被 replace 移走
     except OSError as e:
-        log.warning(f"扫描曲绘目录失败（{cover_dir}）: {e}")
+        # WARNING 而非 DEBUG：落盘失败意味着负缓存不生效，7 天抑制会静默失效
+        log.warning(f"曲绘负缓存落盘失败（{path}），本次抑制不持久: {e}")
+    finally:
+        if tmp_path is not None:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def _negative_cache_is_fresh(
+    cache: Dict[str, float], song_id: Union[int, str], now: Optional[float] = None
+) -> bool:
+    """该 id 是否仍在负缓存窗口内（窗口内直接跳过，不发任何请求）。"""
+    stamp = cache.get(_negative_key(song_id))
+    if stamp is None:
+        return False
+    return ((time.time() if now is None else now) - stamp) < _COVER_NEGATIVE_CACHE_TTL
+
+
+def _record_negative(
+    song_ids: Iterable[Union[int, str]], path: Optional[Path] = None
+) -> int:
+    """把「双源均 404」的 id 写入负缓存（一次读-改-写），返回写入条数。"""
+    keys = [_negative_key(sid) for sid in song_ids]
+    if not keys:
         return 0
-    for path in entries:
-        if path.suffix.lower() != '.png':
-            continue
-        try:
-            sid = int(path.stem)
-        except ValueError:
-            continue
-        if not _is_banquet_id(sid):
-            continue
-        try:
-            path.unlink(missing_ok=True)
-            removed += 1
-        except OSError as e:
-            log.warning(f"删除旧宴会场曲绘 {path.name} 失败: {e}")
-    return removed
+    cache = _load_negative_cache(path)
+    now = time.time()
+    for key in keys:
+        cache[key] = now
+    _save_negative_cache(cache, path)
+    return len(keys)
+
 
 
 async def download_all_covers(
@@ -340,14 +468,15 @@ async def download_all_covers(
     数早已 >= marker，于是新增曲目永远补不上（B50 直接掉占位图）。现在 marker
     只作为附带信息写入，是否下载完全取决于「这个键对应的本地文件是否有效」。
 
-    普通曲目的落雪资产 URL 用 ``id % 10000``（DX 键与 SD 键共用同一张图），
-    宴会场（id >= 100000）落雪没有对应资产，只走水鱼精确 ``covers/{id}.png``
-    —— ``% 10000`` 会把 110114 下成 jacket/114.png（另一首歌，HTTP 200）。
-    保存文件名始终是 musicDB.json 中的原始键名。
+    取图统一：**所有 id**（含宴会场 ``>= 100000``）都走落雪
+    ``jacket/{id % 10000}.png``。宴会场没有专属曲绘资产，``% 10000`` 命中的正是
+    它父曲的曲绘（实测 41/41 均 200），不是「另一首歌」。水鱼
+    ``covers/{id}.png`` 只在落雪失败时作最后兜底。保存文件名始终是
+    musicDB.json 中的原始键名。
 
-    marker 版本迁移：marker 不是 ``v2:`` 时先清掉所有宴会场曲绘（旧版写脏的
-    文件是合法 PNG，魔数校验救不了），本次按精确 id 重下；随后写入 ``v2:``
-    标记，迁移只发生一次。``force_redownload=True`` 时忽略「已有有效文件」早退。
+    负缓存：落雪 + 水鱼都 404 的 id 记进 ``cover_negative_cache.json``（TTL 7
+    天），窗口内直接跳过、不发请求，避免每次启动重复刷 404。
+    ``force_redownload=True`` 时忽略「已有有效文件」与负缓存两处早退。
     """
     all_ids = await music_db_cache.get_all_ids()
     if not all_ids:
@@ -360,14 +489,6 @@ async def download_all_covers(
         log.warning(f"创建曲绘目录失败（{cover_dir}）: {e}")
         return 0
 
-    if not _marker_is_current(_read_cover_marker(cover_dir)):
-        purged = _purge_banquet_covers(cover_dir)
-        if purged:
-            log.warning(
-                f"曲绘标记为旧版本（%10000 时代），已清理 {purged} 张宴会场曲绘，"
-                f"本次按水鱼精确 id 重下"
-            )
-
     missing_ids: List[str] = []
     for sid in all_ids:
         if force_redownload or not _cover_file_ok(cover_dir / f'{sid}.png'):
@@ -378,73 +499,118 @@ async def download_all_covers(
         _write_cover_marker(cover_dir, len(all_ids))
         return 0
 
+    # 负缓存过滤：窗口内「双源都没图」的 id 不再发请求
+    negative = {} if force_redownload else _load_negative_cache()
+    now = time.time()
+    pending_ids: List[str] = []
+    suppressed = 0
+    for sid in missing_ids:
+        if _negative_cache_is_fresh(negative, sid, now):
+            suppressed += 1
+            continue
+        pending_ids.append(sid)
+
+    if suppressed:
+        log.info(
+            f"曲绘缺 {len(missing_ids)} 个曲目键，其中 {suppressed} 个双源均无曲绘"
+            f"（负缓存 7 天内），跳过请求"
+        )
+    if not pending_ids:
+        _write_cover_marker(cover_dir, len(all_ids))
+        return 0
+
     # 构建映射：download_id → [original_id, ...]
-    # 同一 download_id 只需下载一次，再写入所有原始 ID
-    # 落雪文档：非宴会场 ID 统一 % 10000
+    # 同一 download_id 只需下载一次，再写入所有原始 ID。落雪资产统一 % 10000：
     #   44     → 下载 /44.png,   保存 44.png    （原生 ID）
     #   10044  → 下载 /44.png,   保存 10044.png（水鱼 DX = 落雪 SD + 10000）
-    #   110114 → 水鱼 covers/110114.png，保存 110114.png（宴会场，禁 % 10000）
+    #   110121 → 下载 /121.png,  保存 110121.png（宴会场 = 父曲曲绘，实测 200）
     # 保存文件名保持原始 ID，music_picture() 查找时能命中
     from .image import forget_corrupted_cover
 
     id_map: Dict[int, List[str]] = {}
-    banquet_ids: List[int] = []
-    for sid in missing_ids:
-        try:
-            num_id = int(sid)
-        except (TypeError, ValueError):
+    placeholder_ids: List[str] = []
+    for sid in pending_ids:
+        did = _cover_download_id(sid)
+        if did is None:
+            # 整万位 id：% 10000 == 0，上游没有 0.png，按「确实没图」记负缓存
+            placeholder_ids.append(sid)
             continue
-        if _is_banquet_id(num_id):
-            # 落雪没有宴会场曲绘：% 10000 下到的是另一首歌，只能走水鱼精确 id
-            banquet_ids.append(num_id)
-            continue
-        id_map.setdefault(num_id % 10000, []).append(sid)
+        id_map.setdefault(did, []).append(sid)
+
+    if placeholder_ids:
+        preview = ', '.join(str(x) for x in placeholder_ids[:8])
+        if len(placeholder_ids) > 8:
+            preview += ' ...'
+        log.info(
+            f"{len(placeholder_ids)} 个曲目 id 归一化后为 0（整万位），"
+            f"上游无对应曲绘，按缺失处理: {preview}"
+        )
 
     log.info(
-        f"曲绘缺 {len(missing_ids)}/{len(all_ids)} 个曲目键，"
-        f"开始顺序补齐（{len(id_map) + len(banquet_ids)} 个唯一图片）..."
+        f"曲绘缺 {len(pending_ids)}/{len(all_ids)} 个曲目键，"
+        f"开始顺序补齐（{len(id_map)} 个唯一图片）..."
     )
     downloaded = 0
+    missing_both: List[str] = list(placeholder_ids)
 
     for download_id, original_ids in id_map.items():
         # 先下载到临时文件名；成功/失败/异常都必须清掉，曲绘目录里不留 __tmp_*.png
         tmp_path = cover_dir / f'__tmp_{download_id}.png'
         tmp_save_id = f'__tmp_{download_id}'
+        lxns_status: List[str] = []
+        data: Optional[bytes] = None
         try:
-            if not _download_one_cover(
-                download_id, tmp_save_id, cover_dir, _LXNS_HEADERS, force=force_redownload
+            if _download_one_cover(
+                download_id, tmp_save_id, cover_dir, _LXNS_HEADERS,
+                force=force_redownload, status=lxns_status,
             ):
-                continue
-            if not _cover_file_ok(tmp_path):
-                # 200 but HTML/反爬页：不能直接复制给曲目键
-                log.warning(f"曲绘 {download_id} 下载内容不是有效图片，丢弃")
-                continue
-            try:
-                data = tmp_path.read_bytes()
-            except OSError as e:
-                log.warning(f"曲绘临时文件 {tmp_path.name} 读取失败: {e}")
-                continue
-            # 下载成功，原子写入所有原始 ID
-            for oid in original_ids:
-                if not _atomic_write_cover(cover_dir / f'{oid}.png', data):
-                    continue
-                forget_corrupted_cover(oid)
-            downloaded += 1
+                if not _cover_file_ok(tmp_path):
+                    # 200 but HTML/反爬页：不能直接复制给曲目键
+                    log.warning(f"曲绘 {download_id} 下载内容不是有效图片，丢弃")
+                else:
+                    try:
+                        data = tmp_path.read_bytes()
+                    except OSError as e:
+                        log.warning(f"曲绘临时文件 {tmp_path.name} 读取失败: {e}")
         finally:
             try:
                 tmp_path.unlink(missing_ok=True)
             except OSError:
                 pass
 
-    # 宴会场逐曲精确下载：水鱼 covers/{id}.png（_download_one_cover_fish 对
-    # >= 100000 保持原 ID，自身即原子落盘 + 魔数校验）
-    for num_id in banquet_ids:
-        if not _download_one_cover_fish(
-            num_id, str(num_id), cover_dir, force=force_redownload
-        ):
+        if data is not None:
+            # 下载成功，原子写入所有原始 ID
+            for oid in original_ids:
+                if not _atomic_write_cover(cover_dir / f'{oid}.png', data):
+                    continue
+                forget_corrupted_cover(oid)
+            downloaded += 1
             continue
-        forget_corrupted_cover(num_id)
-        downloaded += 1
+
+        # 落雪拿不到 → 水鱼最后兜底。id 归一化在 fish_cover_id 里（同为 % 10000），
+        # 宴会 id 因此同样落到父曲那张图，而不是必然 404 的 6 位地址。
+        lxns_not_found = lxns_status[-1:] == ['not_found']
+        for oid in original_ids:
+            fish_status: List[str] = []
+            if _download_one_cover_fish(
+                int(oid), oid, cover_dir, force=force_redownload, status=fish_status
+            ):
+                forget_corrupted_cover(oid)
+                downloaded += 1
+            elif lxns_not_found and fish_status[-1:] == ['not_found']:
+                # 只有「上游确实 404」才进负缓存：反爬 / 网络抖动还会重试
+                missing_both.append(oid)
+
+    if missing_both:
+        # 单曲不再逐条刷 WARNING：一次汇总 + 落负缓存
+        _record_negative(missing_both)
+        preview = ', '.join(str(x) for x in missing_both[:8])
+        if len(missing_both) > 8:
+            preview += ' ...'
+        log.info(
+            f"{len(missing_both)} 个 id 双源均无曲绘，已记入负缓存"
+            f"（{_COVER_NEGATIVE_CACHE_TTL // 86400} 天内不再请求）: {preview}"
+        )
 
     # 写入本地固化标记（仅附带信息）
     _write_cover_marker(cover_dir, len(all_ids))
@@ -458,17 +624,24 @@ async def download_all_covers(
 # ==========================================
 
 def fish_cover_id(song_id: int) -> int:
-    """曲目 ID → 水鱼 covers 目录里的图片 ID。
+    """曲目 ID → 水鱼 covers 目录里的图片 ID（与落雪 jacket 同一套归一化）。
 
-    水鱼 DX 谱面 ID = 落雪 ID + 10000，所以 ``10000 <= id < 100000`` 要减回
-    10000（旧实现只处理 10001~11000，导致 DX id 11001..99999 拼出
-    11008.png 这种不存在的地址）。
-    宴会场（>= 100000）保持原 ID 语义——禁止 ``% 10000``，那会把不同宴会场
-    曲目压到同一张图上。
+    ``>= 10000`` 一律 ``% 10000``：水鱼 DX 谱面 ID = 落雪 ID + 10000，要减回
+    10000（旧实现只处理 10001~11000，导致 DX id 11001..99999 拼出 11008.png
+    这种不存在的地址）；宴会场（>= 100000）命中的同样是父曲那张图（落雪侧
+    实测 41/41 均 200），因此也走 ``% 10000``——保留 6 位原 ID 只会拼出必然
+    404 的地址（水鱼没有宴会专属封面）。
+
+    归一化结果为 ``0``（``10000`` / ``100000`` 这类整万位 id）时抛
+    ``ValueError``：``00000.png`` 同样不存在，调用方应先经
+    ``_cover_download_id`` 判空并按 not_found 处理。
     """
     song_id = int(song_id)
-    if 10000 <= song_id < 100000:
-        return song_id - 10000
+    if song_id >= 10000:
+        cover_id = song_id % 10000
+        if cover_id == 0:
+            raise ValueError(f"曲目 id {song_id} 归一化后为 0，上游无对应曲绘")
+        return cover_id
     return song_id
 
 
@@ -488,19 +661,27 @@ def get_fish_cover_url(song_id: int) -> str:
 
 
 def _download_one_cover_fish(
-    download_id: int, save_id: str, cover_dir: Path, force: bool = False
+    download_id: int,
+    save_id: str,
+    cover_dir: Path,
+    force: bool = False,
+    status: Optional[List[str]] = None,
 ) -> bool:
     """
-    使用水鱼 API 下载单张曲绘。
+    使用水鱼 API 下载单张曲绘（只作落雪之后的最后兜底）。
     水鱼封面 URL: https://www.diving-fish.com/covers/{id:05d}.png
-    ID 归一化交给 ``fish_cover_id``：``10000 <= id < 100000`` 减 10000，
-    宴会场 ``>= 100000`` 保持原 ID（不能被 ``% 10000`` 压到同一张图）。
+    ID 归一化交给 ``fish_cover_id``：``>= 10000`` 统一 ``% 10000``（DX 减
+    10000、宴会场落到父曲那张图）。
+
+    404 记 DEBUG：宴会 id 在上游没有专属封面属于预期，逐条 WARNING 只会刷屏；
+    调用方会汇总成一行 INFO 并写入负缓存。
 
     Args:
-        force: True 时跳过「已有有效文件」早退，强制重新下载
+        force:  True 时跳过「已有有效文件」早退，强制重新下载
+        status: 可选，收集结果类别（见 ``_set_status``）
     """
     cover_path = cover_dir / f'{save_id}.png'
-    
+
     # 已有有效文件则跳过（force 时必须绕过：脏图魔数合法，只能靠重下覆盖）
     # 用 _cover_file_ok 而非裸魔数：已缓存的占位图不能被当成「已完成」
     if not force and cover_path.exists() and cover_path.stat().st_size > 5000:
@@ -508,10 +689,16 @@ def _download_one_cover_fish(
         try:
             if _cover_file_ok(cover_path):
                 forget_corrupted_cover(save_id)
+                _set_status(status, 'ok')
                 return True
         except Exception:
             pass
-    
+
+    # 整万位 id（10000 / 100000 …）归一化后为 0 → 00000.png 不存在，不发请求
+    if _cover_download_id(download_id) is None:
+        _set_status(status, 'not_found')
+        log.debug(f"水鱼曲绘 {save_id}({download_id}) 归一化后为 0，上游无此资产")
+        return False
     url = get_fish_cover_url(download_id)
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -523,20 +710,28 @@ def _download_one_cover_fish(
         try:
             resp = cffi_requests.get(url, headers=headers, impersonate="edge101")
         except Exception as e:
+            _set_status(status, 'error')
             log.warning(f"水鱼曲绘 {save_id}({download_id}) 下载失败: {e}")
             return False
-    
+
     try:
         resp.raise_for_status()
     except Exception as e:
-        log.warning(f"水鱼曲绘 {save_id}({download_id}) 下载失败: {e}")
+        if getattr(resp, 'status_code', 0) in (404, 410):
+            _set_status(status, 'not_found')
+            log.debug(f"水鱼曲绘 {save_id}({download_id}) 不存在: {e}")
+        else:
+            _set_status(status, 'error')
+            log.warning(f"水鱼曲绘 {save_id}({download_id}) 下载失败: {e}")
         return False
 
     if not _atomic_write_cover(cover_path, resp.content):
+        _set_status(status, 'error')
         return False
     # 下载成功即解除损坏记录：有效文件不能再被 image 层当坏文件删掉
     from .image import forget_corrupted_cover
     forget_corrupted_cover(save_id)
+    _set_status(status, 'ok')
     log.info(f"水鱼曲绘 {save_id}.png({download_id}) 下载成功")
     return True
 
@@ -560,9 +755,10 @@ def fish_id_to_lxns_id(fish_id: int) -> int:
 def _cover_candidates(song_id: int) -> List[str]:
     """``music_picture`` 可能为该 ID 命中的文件名候选（按查找优先级）。
 
-    宴会场（>= 100000）只承认精确 ``{id}.png``：``music_picture`` 在
-    ``{id}.png`` 缺失时会回退到 ``{id - 100000}.png``——那是**另一首歌**的
-    曲绘，拿回退结果判断「有没有图」等于把别人的图当健康文件。
+    宴会场（>= 100000）只承认精确 ``{id}.png``：``music_picture`` 会先回退到
+    ``{id - 100000}.png``（不够再减 10000），那是**别的键**，可能是别的曲目的
+    图；拿回退结果判「有没有图」等于把别人的文件当健康文件。宴会 id 的曲绘
+    本来与父曲同图，但必须落到自己的键名上——逐键补缺才会写出它。
 
     普通 SD/DX 仍按 ``{id}`` / ``{id±10000}`` 的回退集合判断：DX 键 10008
     命中 8.png 是正常的，不能判成缺图反复下载。
@@ -582,8 +778,8 @@ def _cover_needs_download(song_id: int, cover_dir: Optional[Path] = None) -> boo
     """该曲目是否没有**属于自己的**有效曲绘（需要补下）。
 
     只看 ``_cover_candidates`` 里是否有有效文件，不经过 ``music_picture`` 的
-    回退：否则 110114 会因为 10114.png（另一首歌）存在而被判成「健康」，逐键
-    补缺对宴会场形同虚设。
+    回退：否则 110114 会因为 10114.png（另一个键）存在而被判成「健康」，
+    ``{id}.png`` 永远补不出来。
     """
     if cover_dir is None:
         from . import image as image_mod
@@ -630,31 +826,44 @@ async def ensure_covers(
         if sid not in ids:
             ids.append(sid)
 
-    missing = [sid for sid in ids if _cover_needs_download(sid)]
+    # 负缓存命中且未过期 → 直接跳过，不发任何请求（双源都没图的 id 不再重试）
+    negative = _load_negative_cache()
+    now = time.time()
+    missing = [
+        sid for sid in ids
+        if _cover_needs_download(sid) and not _negative_cache_is_fresh(negative, sid, now)
+    ]
     if not missing:
         return 0
     if cover_dir is None:
         cover_dir = music_picture(missing[0]).parent
     cover_dir = Path(cover_dir)
 
+    failed_404: List[int] = []
+
     async def _default_download(sid: int) -> bool:
-        if _is_banquet_id(sid):
-            # 宴会场：落雪资产没有这张图，% 10000 会下到另一首歌（200 也一样错），
-            # 只走水鱼精确 covers/{id}.png；下载后仍由 _atomic_write_cover 校验魔数。
+        # 所有 id 统一走落雪 ``% 10000``：宴会场取到的就是父曲曲绘（实测 41/41
+        # 均 200），不再是「另一首歌」。水鱼只在落雪失败时作最后兜底。
+        did = _cover_download_id(sid)
+        if did is None:
+            # 整万位 id（如 10000）：0.png 是占位 logo，不发请求，直接记负缓存
+            failed_404.append(sid)
+            return False
+        lxns_status: List[str] = []
+        ok = await anyio.to_thread.run_sync(
+            _download_one_cover, did, str(sid), cover_dir, _LXNS_HEADERS,
+            False, lxns_status,
+        )
+        fish_status: List[str] = []
+        if not ok:
             ok = await anyio.to_thread.run_sync(
-                _download_one_cover_fish, sid, str(sid), cover_dir
+                _download_one_cover_fish, sid, str(sid), cover_dir, False, fish_status
             )
-        else:
-            # 普通曲目：落雪资产按 %10000 取图，失败再退水鱼（内部再做 10000 回退）
-            ok = await anyio.to_thread.run_sync(
-                _download_one_cover, sid % 10000, str(sid), cover_dir, _LXNS_HEADERS
-            )
-            if not ok:
-                ok = await anyio.to_thread.run_sync(
-                    _download_one_cover_fish, sid, str(sid), cover_dir
-                )
         if ok:
             forget_corrupted_cover(sid)
+        elif lxns_status[-1:] == ['not_found'] and fish_status[-1:] == ['not_found']:
+            # 双源都 404 才记负缓存；网络故障、反爬都留着下次重试
+            failed_404.append(sid)
         return ok
 
     dl = downloader if downloader is not None else _default_download
@@ -693,4 +902,10 @@ async def ensure_covers(
             continue
     if restored:
         log.info(f"B50 曲绘按需补下 {restored}/{len(missing)} 张")
+    if failed_404:
+        _record_negative(failed_404)
+        log.info(
+            f"{len(failed_404)} 个 id 双源均无曲绘，已记入负缓存"
+            f"（{_COVER_NEGATIVE_CACHE_TTL // 86400} 天内不再请求）"
+        )
     return restored
