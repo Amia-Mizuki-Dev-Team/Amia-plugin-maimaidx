@@ -1,9 +1,13 @@
 import asyncio
+import contextlib
 import json
+import os
 import random
+import tempfile
 import httpx
 import aiofiles
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, Any, List, Optional
 from loguru import logger as log
 from ..config import maiconfig, static, music_file, coverdir, guess_file, music_db_path
@@ -106,22 +110,153 @@ class MusicList(list):
         return result
 
 
-def _normalize_lxns_song(song: Dict[str, Any]) -> Music:
+async def _atomic_write_text(path: Path, text: str) -> None:
+    """先写同目录临时文件再 ``os.replace`` 原子落盘。
+
+    直接覆盖写一旦中途失败（进程退出、磁盘写满）就会留下半截 JSON，
+    下次启动回退缓存时解析失败；``os.replace`` 在 NTFS 上是原子替换。
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp"
+    )
+    os.close(fd)
+    try:
+        async with aiofiles.open(tmp_name, "w", encoding="utf-8") as f:
+            await f.write(text)
+        os.replace(tmp_name, path)
+    except Exception:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_name)
+        raise
+
+
+_UTAGE_TYPE_ALIASES = {"utage", "宴会场", "宴会場"}
+_DX_TYPE_ALIASES = {"dx", "deluxe"}
+
+
+def _classify_lxns_chart_type(
+    key: Any, item: Dict[str, Any], song: Dict[str, Any]
+) -> str:
+    """判定单张谱面的类型，返回 ``standard`` / ``DX`` / ``utage``。
+
+    条目自带的 ``type`` 最可信，其次外层 key，最后才是歌曲级别的 ``type``。
+    """
+    raw = str(item.get("type") or key or song.get("type") or "").strip().lower()
+    if raw in _UTAGE_TYPE_ALIASES:
+        return "utage"
+    if raw in _DX_TYPE_ALIASES:
+        return "DX"
+    return "standard"
+
+
+def _lxns_chart_entries(song: Dict[str, Any]) -> List[tuple[str, Dict[str, Any]]]:
+    """展平 ``difficulties`` 为 (谱面类型, 谱面) 列表，保持上游顺序。"""
+    raw_difficulties = song.get("difficulties") or {}
+    entries: List[tuple[str, Dict[str, Any]]] = []
+    if isinstance(raw_difficulties, dict):
+        for key, value in raw_difficulties.items():
+            items = value if isinstance(value, list) else [value]
+            entries.extend(
+                (_classify_lxns_chart_type(key, item, song), item)
+                for item in items
+                if isinstance(item, dict)
+            )
+    elif isinstance(raw_difficulties, list):
+        entries.extend(
+            (_classify_lxns_chart_type(None, item, song), item)
+            for item in raw_difficulties
+            if isinstance(item, dict)
+        )
+    return entries
+
+
+def _normalize_lxns_song(
+    song: Dict[str, Any], *, chart_type: Optional[str] = None
+) -> Optional[Music]:
     """Convert the public LXNS song shape to the Fish-compatible shape.
 
     The command modules consume ``level``/``ds``/``charts`` and
     ``basic_info``.  Keeping this conversion at the provider boundary lets
     either public source work when the other one is unavailable.
+
+    ``difficulties`` has two shapes upstream: the older flat list, and the
+    current ``{"standard": [...], "dx": [...]}`` mapping returned by
+    ``song/list``.  Each chart carries its own ``type`` in the mapping shape;
+    that field wins over the enclosing key when present.
+
+    ``chart_type`` 强制按某一谱种归一化（``"standard"`` / ``"DX"``）：混合歌
+    靠它稳定产出 SD、DX 两条条目，不依赖歌曲 ``type`` 字段或 JSON 键序。
+    宴会场（utage）谱面返回 ``None``：它的字段形态（notes 为 dict、level 形如
+    ``"12?"``、ds 恒为 0）与 SD/DX 不同，混进曲库会直接抛异常。
     """
-    difficulties = song.get("difficulties") or []
+    entries = _lxns_chart_entries(song)
+
+    # 宴会场与 SD/DX 不是同一命名空间。歌曲级别声明 utage 时整首跳过；
+    # 谱面级别的 utage 只丢弃那部分，同曲的 SD/DX 照常处理。
+    if str(song.get("type") or "").strip().lower() in _UTAGE_TYPE_ALIASES:
+        return None
+    non_utage = [entry for entry in entries if entry[0] != "utage"]
+    if entries and not non_utage:
+        return None
+    entries = non_utage
+
+    def difficulty_order(entry: tuple[str, Dict[str, Any]]) -> int:
+        try:
+            return int(entry[1].get("difficulty"))
+        except (TypeError, ValueError):
+            return len(entries)
+
+    # dict 展平后 SD/DX 各自有序，但两类交错；按 difficulty 索引重排，
+    # 让 level/ds/charts 的下标始终是 0=Basic … 4=Re:Master。
+    entries.sort(key=difficulty_order)
+
+    # 单一 type 字段无法表达 SD/DX 双谱种：调用方显式指定优先（混合歌靠它
+    # 稳定产出 SD/DX 两条），否则按 has_standard 优先——同一 id 同时有 SD 与
+    # DX 时基础条目固定是 SD，不随 difficulties 的键序漂移；再否则才看歌曲
+    # 声明，最后取首张（difficulty 最小）谱面的类型。
+    requested = str(chart_type or "").strip().lower()
+    raw_type = str(song.get("type") or "").strip().lower()
+    has_standard = any(entry[0] == "standard" for entry in entries)
+    has_dx = any(entry[0] == "DX" for entry in entries)
+    if requested in _DX_TYPE_ALIASES:
+        music_type = "DX"
+    elif requested in {"standard", "sd"}:
+        music_type = "standard"
+    elif has_standard:
+        music_type = "standard"
+    elif has_dx:
+        music_type = "DX"
+    elif raw_type in _DX_TYPE_ALIASES:
+        music_type = "DX"
+    elif entries:
+        music_type = entries[0][0]
+    else:
+        music_type = "standard"
+
+    # 排序只解决顺序、不解决归属：同一 id 的 SD/DX 两套谱面会互相顶替
+    # 下标（id=70 的 Master 位会显示 DX 定数），所以确定 music_type 后
+    # 必须先按它裁剪。未显式指定时裁剪后为空说明上游 type 与谱面矛盾，
+    # 保留原样以免整首歌丢谱；显式指定却无对应谱面时宁可不产出条目，
+    # 也不能拿另一谱面的定数顶替这个 id。
+    selected = [entry for entry in entries if entry[0] == music_type]
+    if selected:
+        entries = selected
+    elif chart_type is not None:
+        return None
+
     levels = []
     ds_values = []
     charts = []
-    for difficulty in difficulties:
-        if not isinstance(difficulty, dict):
-            continue
+    for _, difficulty in entries:
         levels.append(str(difficulty.get("level", "?")))
-        ds_values.append(difficulty.get("level_value", 0))
+        # level_value 可能缺失、为 null 或为字符串；统一成 float 才能和
+        # total_level_data 的定数分桶键（str(float)）对得上。
+        try:
+            level_value = float(difficulty.get("level_value") or 0)
+        except (TypeError, ValueError):
+            level_value = 0.0
+        ds_values.append(level_value)
         charts.append(
             {
                 "notes": difficulty.get("notes") or [],
@@ -129,11 +264,18 @@ def _normalize_lxns_song(song: Dict[str, Any]) -> Music:
             }
         )
 
-    raw_type = str(song.get("type", "")).lower()
-    music_type = "DX" if raw_type in {"dx", "deluxe"} else "standard"
+    # DX 条目在水鱼/成绩体系里是 id+10000，保留原 id 会让封面、B50 记录对不上。
+    # ``0 < id < 10000`` 的守卫消掉两类误伤：宴会场（>= 100000）会被改写成不存在的
+    # 十万级 id；本来就是偏移命名的 id（>= 10000）再加一次会撞到别的歌。
+    song_id = song.get("id")
+    if music_type == "DX":
+        numeric_id = str(song_id if song_id is not None else "").strip()
+        if numeric_id.isdigit() and 0 < int(numeric_id) < 10000:
+            song_id = str(int(numeric_id) + 10000)
+
     return Music(
         {
-            "id": song.get("id"),
+            "id": song_id,
             "title": song.get("title", ""),
             "type": music_type,
             "ds": ds_values,
@@ -148,6 +290,39 @@ def _normalize_lxns_song(song: Dict[str, Any]) -> Music:
             },
         }
     )
+
+
+def _merge_song_sources(
+    lxns_music: List[Dict[str, Any]], fish_music: List[Dict[str, Any]]
+) -> Dict[str, Music]:
+    """合流两源曲库，键一律是**归一化后**的 id。
+
+    水鱼本身就是「SD、DX 各一条记录」的命名空间，所以先入表；落雪条目用
+    ``setdefault`` 补缺，于是「是否已存在」只看归一化后的键——水鱼只给了
+    SD 1001 时，落雪混合歌的 DX 11001 仍然要写进去（旧实现按落雪原始 id
+    跳过，DX 条目会整条丢失）。
+
+    混合歌（同一 id 同时有 SD 与 DX 谱面）必须产出两条：先 SD 后 DX 的顺序
+    写死，基础条目由 ``has_standard`` 决定，不看歌曲 ``type`` 也不看 JSON 键序。
+    """
+    combined: Dict[str, Music] = {}
+    for m in fish_music:
+        if isinstance(m, dict) and "id" in m:
+            combined[str(m["id"])] = Music(m)
+
+    for m in lxns_music:
+        if not isinstance(m, dict) or "id" not in m:
+            continue
+        chart_types = {entry[0] for entry in _lxns_chart_entries(m)}
+        mixed = {"standard", "DX"} <= chart_types
+        music = _normalize_lxns_song(m, chart_type="standard" if mixed else None)
+        if music is not None:
+            combined.setdefault(str(music.id), music)
+        if mixed:
+            dx_music = _normalize_lxns_song(m, chart_type="DX")
+            if dx_music is not None:
+                combined.setdefault(str(dx_music.id), dx_music)
+    return combined
 
 
 class MaiMusic:
@@ -219,12 +394,35 @@ class MaiMusic:
             except Exception as e:
                 log.error(f"拉取落雪别名数据源发生异常: {e}")
 
+            # 落雪同样为空时「仅使用落雪数据（落雪 0 首）」的措辞会自相矛盾，
+            # 按落雪条数切换文案；控制流不变。
+            lxns_note = (
+                f"本次仅使用落雪数据（落雪 {len(lxns_music)} 首）"
+                if lxns_music
+                else "落雪 0 首、水鱼 0 条，稍后将回退本地缓存"
+            )
             try:
                 res = await client.get("https://www.diving-fish.com/api/maimaidxprober/music_data")
-                if res.status_code == 200:
+                if res.status_code != 200:
+                    log.warning(
+                        f"水鱼曲库请求失败：status_code={res.status_code}，"
+                        f"类型/条数不可用，{lxns_note}"
+                    )
+                else:
                     res_json = res.json()
-                    fish_music = res_json if isinstance(res_json, list) else []
-                
+                    if not isinstance(res_json, list):
+                        log.warning(
+                            f"水鱼曲库返回格式异常：类型={type(res_json).__name__}（期望 list），"
+                            f"{lxns_note}"
+                        )
+                    elif not res_json:
+                        log.warning(
+                            "水鱼曲库返回空列表：条数=0，"
+                            f"{lxns_note}"
+                        )
+                    else:
+                        fish_music = res_json
+
                 alias_res = await client.get("https://www.diving-fish.com/api/maimaidxprober/side_api/alias")
                 if alias_res.status_code == 200:
                     alias_json = alias_res.json()
@@ -283,16 +481,7 @@ class MaiMusic:
                 log.error(f"本地歌曲缓存回退失败：{e}")
             return False
 
-        combined_music = {}
-        for m in fish_music:
-            if isinstance(m, dict) and 'id' in m:
-                combined_music[str(m['id'])] = Music(m)
-                
-        for m in lxns_music:
-            if isinstance(m, dict) and 'id' in m:
-                sid = str(m['id'])
-                if sid not in combined_music:
-                    combined_music[sid] = _normalize_lxns_song(m)
+        combined_music = _merge_song_sources(lxns_music, fish_music)
 
         self.total_list = MusicList(combined_music.values())
         self.total_alias_list = {}
@@ -364,17 +553,21 @@ class MaiMusic:
                     for sid, aliases in self.total_alias_list.items()
                     if aliases
                 ]
-                async with aiofiles.open(local_alias_file, 'w', encoding='utf-8') as f:
-                    await f.write(json.dumps(alias_save, ensure_ascii=False, indent=2))
+                await _atomic_write_text(
+                    local_alias_file,
+                    json.dumps(alias_save, ensure_ascii=False, indent=2),
+                )
                 log.info(f'别名库已持久化保存，共 {len(alias_save)} 条记录（本地加载 {local_aliases_loaded} 条 + API 补充）')
             except Exception as e:
-                log.warning(f'别名库持久化保存失败: {e}')
+                log.error(f'别名库持久化保存失败: {e}')
 
         try:
-            async with aiofiles.open(music_file, 'w', encoding='utf-8') as f:
-                await f.write(json.dumps(self.total_list, ensure_ascii=False, indent=4))
-        except Exception:
-            pass
+            await _atomic_write_text(
+                music_file,
+                json.dumps(self.total_list, ensure_ascii=False, indent=4),
+            )
+        except Exception as e:
+            log.error(f'音乐库持久化保存失败: {e}')
 
         asyncio.create_task(self.download_missing_covers())
         return True

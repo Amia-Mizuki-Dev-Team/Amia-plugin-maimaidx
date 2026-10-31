@@ -36,21 +36,20 @@ alias_song          = on_regex(r'^(id)?\s?(.+)\s?有什么别[名称]$', re.IGNO
 
 @update_alias.handle()
 async def _(event: MessageEvent):
+    # finish() 抛出的 FinishedException 是 Exception 子类，必须留在 try 之外，
+    # 否则成功回执会被下面的 except 再补一条失败回执。
+    # 预置 False 是结构性兜底：except 分支靠 finish() 抛异常终止，若将来
+    # finish() 改为返回，下面按「未更新」发回执好过直接 NameError。
+    updated = False
     try:
         updated = await mai.get_music()
-        if not updated:
-            await update_alias.finish(
-                '上游曲库暂时不可达，已保留本地歌曲和别名缓存，请稍后重试',
-                reply_message=True,
-            )
-        log.info('手动更新曲库与三源别名库成功')
-        await update_alias.finish(
-            '曲库及别名库更新成功（LXNS、水鱼曲库 + 柚子别名）',
-            reply_message=True,
-        )
     except Exception as e:
         log.error(f'手动更新别名库失败: {e}')
         await update_alias.finish('曲库及别名库更新失败，已保留本地缓存，请查看后台日志', reply_message=True)
+    if not updated:
+        await update_alias.finish('上游曲库暂时不可达，已保留本地歌曲和别名缓存，请稍后重试', reply_message=True)
+    log.info('手动更新曲库与三源别名库成功')
+    await update_alias.finish('曲库及别名库更新成功（LXNS、水鱼曲库 + 柚子别名）', reply_message=True)
 
 
 @alias_local_apply.handle()

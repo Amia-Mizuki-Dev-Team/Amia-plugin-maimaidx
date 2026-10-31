@@ -1,5 +1,20 @@
 # Changelog
 
+## [2026-10-31] - 定数 0.0 修复 / 曲库持久化 / 更新别名库单回执
+
+### Fixed
+
+- **落雪曲库归一化**（`libraries/maimaidx_music.py`）：`difficulties` 兼容字典形态（`{'standard':[...], 'dx':[...]}`），按 `difficulty` 排序并按谱种裁剪；混合 SD/DX 歌产出 SD+DX 双条目（DX id = 基础 id+10000）；utage 谱面跳过不并入 standard；`level_value` 统一转 float；DX-only 歌 id 映射 +10000（仅 `0<id<10000`，宴会场不误伤）。
+- **成绩图定数 0.0**（同上 + `libraries/maimaidx_best_50.py` 既有回填链）：落雪单源时不再整库丢失定数；混合歌 DX 成绩行不再错用 SD 定数。
+- **水鱼源空结果不再静默**（`libraries/maimaidx_music.py`）：status≠200 / 非 list / 空列表三种情况打 warning 并带条数，合并行为不变。
+- **曲库持久化可靠化**（`libraries/maimaidx_music.py`）：`music_data.json` / `music_alias.json` 改为同目录临时文件 + `os.replace` 原子落盘，失败 `log.error`（此前裸 `except: pass`，导致 10-20 后从未成功写盘）。
+- **更新别名库双回执**（`command/mai_alias.py`）：`finish()` 移出 `try`，不再被同函数 `except Exception` 捕获后补发"更新失败"假消息。
+- **DX 分数渲染零除**（`libraries/maimaidx_music_info.py`）：`_dxscore=0` 时不再除零。
+
+### Tests
+
+- 新增 `tests/test_lxns_mixed_charts.py`（11 例）：dict 形态解析、混合歌 SD+DX 双条目、utage 过滤、dx-only id 映射、双源不重复。
+
 ## [2026-10-30] - 占位图曲绘不落盘 / 缓存自愈
 
 ### Added / Fixed

@@ -225,7 +225,9 @@ async def _legacy_draw_music_play_data(qqid: int, music_id: str) -> Union[str, M
                 if dev:
                     dxscore = info.dxScore
                     _dxscore = sum(music.charts[num].notes) * 3
-                    dxnum = dxScore(dxscore / _dxscore * 100)
+                    # notes 缺失时 _dxscore 为 0，除法会直接抛 ZeroDivisionError；
+                    # 没有基础 dx 分即视为无评级。
+                    dxnum = dxScore(dxscore / _dxscore * 100) if _dxscore else 0
                     rating, rate = info.ra, score_Rank_l[info.rate]
                     if dxnum != 0:
                         im.alpha_composite(
